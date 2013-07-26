@@ -7,6 +7,8 @@
 //
 // * Changelog (date/version/description):
 // * 2013-07-24	-	0.1.1		-	initial test version
+// * 2013-07-25	-	0.1.2		-	add pumpkin spawn
+// * 2013-07-25	-	0.1.3		-	find ground to spawn pumpkin on
 //	------------------------------------------------------------------------------------
 
 
@@ -14,23 +16,34 @@
 #include <sourcemod>
 #include <donator>
 #include <clientprefs>
+#include <sdktools>
 
 
 #pragma semicolon 1
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.1"
-
+#define PLUGIN_VERSION	"0.1.3"
 
 // These define the text players see in the donator menu
-#define MENUTEXT_SPAWN_ITEM		"Spawn Item On Death"
-#define MENUTITLE_SPAWN_ITEM		"Donator: Change Item Spawned On Death:"
-#define COOKIENAME_SPAWN_ITEM		"donator_deathperks"
-#define COOKIEDESCRIPTION_SPAWN_ITEM		"Spawn pumpkin/misc on donator death."
-#define MENUSELECT_ITEM_NULL		"Off"
-#define MENUSELECT_ITEM_PUMPKIN		"Pumpkin (exploding)"
-#define MENUSELECT_ITEM_BALL		"Beach Ball"
+#define MENUTEXT_SPAWN_ITEM				"Spawn Item On Death"
+#define MENUTITLE_SPAWN_ITEM			"Donator: Change Item Spawned On Death:"
+#define MENUSELECT_ITEM_NULL			"Off"
+#define MENUSELECT_ITEM_PUMPKIN			"Pumpkin (exploding)"
+#define MENUSELECT_ITEM_BALL			"Beach Ball"
+
+// cookie names
+#define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
+#define COOKIEDESCRIPTION_SPAWN_ITEM	"Spawn pumpkin/misc on donator death."
+
+#define ENTITY_NAME_PUMPKIN				"tf_pumpkin_bomb"
+#define MODEL_PATH_PUMPKIN				"models/props_halloween/pumpkin_explode.mdl"
+#define MODEL_PATH_BALL					"models/props_gameplay/ball001.mdl"
+#define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
+
+#define MAX_SPAWN_DISTANCE				1024.0											// max distance to spawn stones beneath players
+#define OFFSET_HEIGHT					-2.0											// distance to sink stones into the ground
+#define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)	// contents mask to spawn stones on
 
 
 enum _:CookieActionType
@@ -84,6 +97,12 @@ public OnAllPluginsLoaded()
 }
 
 
+public OnMapStart()
+{
+//	PrecacheModel( g_sGravestoneMDL[i][0], true );
+}
+
+
 public DonatorMenu:ChangeDeathItemCallback(iClient) Panel_ChangeDeathItem(iClient);
 
 
@@ -120,10 +139,52 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 			{
 				PrintToChat (iClient, "[DeathPerks] Nothing spawned.");
 			}
+			
 			case Action_Pumpkin:
 			{
-				PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
+				decl Float:vOrigin[3];
+				GetClientEyePosition(iClient, vOrigin);
+				decl Handle:TraceRay;
+				new Float:Angles[3] = {90.0, 0.0, 0.0};								// down
+
+				TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+				if (TR_DidHit(TraceRay))
+				{
+					decl Float:Distance;
+					decl Float:vEnd[3];
+					TR_GetEndPosition(vEnd, TraceRay);
+					Distance = (GetVectorDistance(vOrigin, vEnd));
+
+					if (Distance < MAX_SPAWN_DISTANCE)
+					{
+						new iPumpkin = CreateEntityByName(ENTITY_NAME_PUMPKIN);
+						
+						if(IsValidEntity(iPumpkin))
+						{		
+							if(GetEntityCount() < GetMaxEntities()-32)
+							{
+								DispatchSpawn(iPumpkin);
+								vOrigin[2] += 10.0;
+								TeleportEntity(iPumpkin, vEnd, NULL_VECTOR, NULL_VECTOR);
+								PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
+							}
+							else
+							{
+								PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn pumpkin, maxEntities reached.");
+							}
+							
+						}
+						else
+						{
+							PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, pumpkin spawn failed.");
+						}
+					}
+				}
+
+				CloseHandle(TraceRay);
 			}
+			
 			case Action_Ball:
 			{
 				PrintToChat (iClient, "[DeathPerks] Ball spawned.");
@@ -210,4 +271,15 @@ public DeathItemMenuHandler(Handle:menu, MenuAction:action, param1, param2)
 		case MenuAction_End: CloseHandle(menu);
 	}
 }
+
+
+public bool:TraceRayProp(entityhit, mask)
+{
+	if (entityhit == 0)												// I only want it to hit terrain, no models or debris
+	{
+		return true;
+	}
+	return false;
+}
+
 
