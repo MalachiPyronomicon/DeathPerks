@@ -9,6 +9,7 @@
 // * 2013-07-24	-	0.1.1		-	initial test version
 // * 2013-07-25	-	0.1.2		-	add pumpkin spawn
 // * 2013-07-25	-	0.1.3		-	find ground to spawn pumpkin on
+// * 2013-07-26	-	0.1.4		-	add ball spawn
 //	------------------------------------------------------------------------------------
 
 
@@ -23,7 +24,7 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.3"
+#define PLUGIN_VERSION	"0.1.4"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn Item On Death"
@@ -37,13 +38,16 @@
 #define COOKIEDESCRIPTION_SPAWN_ITEM	"Spawn pumpkin/misc on donator death."
 
 #define ENTITY_NAME_PUMPKIN				"tf_pumpkin_bomb"
+
 #define MODEL_PATH_PUMPKIN				"models/props_halloween/pumpkin_explode.mdl"
 #define MODEL_PATH_BALL					"models/props_gameplay/ball001.mdl"
 #define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
+#define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"		// HL2 content!
 
-#define MAX_SPAWN_DISTANCE				1024.0											// max distance to spawn stones beneath players
-#define OFFSET_HEIGHT					-2.0											// distance to sink stones into the ground
-#define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)	// contents mask to spawn stones on
+#define MAX_SPAWN_DISTANCE				1024.0											// max distance to spawn items beneath players
+#define OFFSET_HEIGHT_PUMPKIN			-2.0											// adjust height of pumpkins off ground
+#define OFFSET_HEIGHT_BALL				-2.0											// adjust height of beach balls off ground
+#define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)	// contents mask to spawn items on
 
 
 enum _:CookieActionType
@@ -187,7 +191,23 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 			
 			case Action_Ball:
 			{
-				PrintToChat (iClient, "[DeathPerks] Ball spawned.");
+				new iBall = CreateEntityByName("prop_physics_multiplayer");
+				
+				if(IsValidEntity(iBall))
+				{
+					decl Float:vOrigin[3];
+					GetClientEyePosition(iClient, vOrigin);
+					
+					DispatchKeyValue(iBall, "model", MODEL_PATH_BALL);
+					DispatchKeyValue(iBall, "disableshadows", "1");
+					DispatchKeyValue(iBall, "skin", "0");
+					DispatchKeyValue(iBall, "physicsmode", "1");
+					DispatchKeyValue(iBall, "spawnflags", "256");
+					DispatchSpawn(iBall);
+					TeleportEntity(iBall, vOrigin, NULL_VECTOR, NULL_VECTOR);
+					
+					PrintToChat (iClient, "[DeathPerks] Ball spawned.");
+				}
 			}
 		}
 
