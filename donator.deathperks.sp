@@ -14,6 +14,7 @@
 // * 							-	the event_player_death function is getting kinda ugly - mark for cleanup?
 // * 2013-07-27	-	0.1.6		-	add frog
 // * 2013-07-27	-	0.1.7		-	make frog explosive, fix ignored offset heights
+// * 2013-07-27	-	0.1.8		-	add frog lightning, fix explosion keyvalues
 //	------------------------------------------------------------------------------------
 
 
@@ -28,7 +29,7 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.7"
+#define PLUGIN_VERSION	"0.1.8"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
@@ -37,7 +38,7 @@
 #define MENUSELECT_ITEM_PUMPKIN			"Pumpkin (exploding)"
 #define MENUSELECT_ITEM_BALL			"Beach Ball (bouncing)"
 #define MENUSELECT_ITEM_OILDRUM			"Barrel (exploding)"
-#define MENUSELECT_ITEM_FROG			"Frog (explosion)"
+#define MENUSELECT_ITEM_FROG			"Frog (lightning)"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
@@ -56,7 +57,10 @@
 #define MODEL_PATH_BALL					"models/props_gameplay/ball001.mdl"
 #define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
 #define MODEL_PATH_FROG					"models/props_2fort/frog.mdl"
-#define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"		// HL2 content!
+#define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"	// HL2 content!
+
+// Sprite paths
+#define SPRITE_PATH_LIGHTNING			"sprites/lgtning.vmt"
 
 // Vector angles
 #define VECTOR_ANGLE_DOWN				{90.0, 0.0, 0.0}							// vector angle pointing straight down
@@ -66,17 +70,39 @@
 #define VECTOR_ANGLE_FROG				{0.0, 0.0, 0.0}								// vector angle for frog to spawn at
 #define VECTOR_ANGLE_PROPANETANK		{0.0, 0.0, 0.0}								// vector angle for propane tank to spawn at
 
-#define MAX_SPAWN_DISTANCE				1024.0											// max distance to spawn items beneath players
+// Distances
+#define MAX_SPAWN_DISTANCE				1024.0										// max distance to spawn items beneath players
 
 // Z-Axis offset heights
-#define OFFSET_HEIGHT_PUMPKIN			10.0											// adjust height of pumpkins off ground
-#define OFFSET_HEIGHT_BALL				-20.0											// adjust height of beach balls off ground
-#define OFFSET_HEIGHT_OILDRUM			30.0											// adjust height of oildrum off ground
-#define OFFSET_HEIGHT_FROG				0.0												// adjust height of propane tank off ground
-#define OFFSET_HEIGHT_PROPANETANK		0.0												// adjust height of propane tank off ground
+#define OFFSET_HEIGHT_PUMPKIN			10.0										// adjust height of pumpkins off ground
+#define OFFSET_HEIGHT_BALL				-20.0										// adjust height of beach balls off ground
+#define OFFSET_HEIGHT_OILDRUM			30.0										// adjust height of oildrum off ground
+#define OFFSET_HEIGHT_FROG				0.0											// adjust height of propane tank off ground
+#define OFFSET_HEIGHT_PROPANETANK		0.0											// adjust height of propane tank off ground
 
-#define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)	// contents mask to spawn items on
+// Masks
+#define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)		// contents mask to spawn items on
 
+// Explosion parameters
+#define EXPLOSIONKEYVALUE_MAGNITUDE			"iMagnitude"							// Key value: Magnitude
+#define EXPLOSIONKEYVALUE_SPAWNFLAGS		"spawnflags"							// Key value: flags
+#define EXPLOSIONKEYVALUE_RADIUS			"iRadiusOverride"						// Key value: radius
+//#define EXPLOSION_MAGNITUDE					"1000"									// Magnitude
+#define EXPLOSION_MAGNITUDE					"0"									// Magnitude
+#define EXPLOSION_SPAWNFLAGS				"0"										// flags
+#define EXPLOSION_RADIUS					"256"									// radius
+
+// Lightning parameters
+#define LIGHTNING_HALOINDEX				0											// Precached model index.
+#define LIGHTNING_STARTFRAME			0											// Initital frame to render.
+#define LIGHTNING_FRAMERATE				0											// Beam frame rate.
+#define LIGHTNING_LIFE					0.2											// Time duration of the beam.
+#define LIGHTNING_STARTWIDTH			20.0										// Initial beam width.
+#define LIGHTNING_ENDWIDTH				10.0										// Final beam width.
+#define LIGHTNING_FADELENGTH			0											// Beam fade time duration.
+#define LIGHTNING_AMPLITUDE				1.0											// Beam amplitude.
+#define LIGHTNING_COLOR					{255, 255, 255, 255}						// Color array (r, g, b, a).
+#define LIGHTNING_SPEED					3											// Speed of the beam.
 
 
 enum _:CookieActionType
@@ -94,6 +120,7 @@ enum _:CookieActionType
 // GLOBALS
 new Handle:g_hDeathItemCookie = INVALID_HANDLE;
 new bool:g_bRoundEnded = false;
+new g_iLightningSprite = 0;
 
 
 public Plugin:myinfo = 
@@ -136,6 +163,7 @@ public OnMapStart()
 {
 	PrecacheModel(MODEL_PATH_OILDRUM);
 	PrecacheModel(MODEL_PATH_FROG);
+	g_iLightningSprite = PrecacheModel(SPRITE_PATH_LIGHTNING);
 }
 
 
@@ -345,9 +373,9 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 
 							// Explosion
 							new hExplosion = CreateEntityByName(ENTITY_NAME_EXPLOSION);
-							DispatchKeyValue(hExplosion, "magnitude", "1000");
-							DispatchKeyValue(hExplosion, "spawnflags", "0");
-							DispatchKeyValue(hExplosion, "radius_override", "256");
+							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_MAGNITUDE, EXPLOSION_MAGNITUDE);
+							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_SPAWNFLAGS, EXPLOSION_SPAWNFLAGS);
+							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_RADIUS, EXPLOSION_RADIUS);
 
 							if ( DispatchSpawn(hExplosion) )
 							{
@@ -355,6 +383,31 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 								TeleportEntity(hExplosion, vEnd, NULL_VECTOR, NULL_VECTOR);
 								AcceptEntityInput(hExplosion, "Explode");
 								AcceptEntityInput(hExplosion, "Kill");
+
+								// define where the lightning strike starts
+								new Float:vStart[3];
+								vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
+								vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
+								vStart[2] = vEnd[2] + 800;
+								
+								// define the color of the strike
+								new aColor[4] = LIGHTNING_COLOR;
+																
+								TE_SetupBeamPoints(		vStart, 
+														vEnd, 
+														g_iLightningSprite, 
+														LIGHTNING_HALOINDEX, 
+														LIGHTNING_STARTFRAME, 
+														LIGHTNING_FRAMERATE, 
+														LIGHTNING_LIFE, 
+														LIGHTNING_STARTWIDTH, 
+														LIGHTNING_ENDWIDTH, 
+														LIGHTNING_FADELENGTH, 
+														LIGHTNING_AMPLITUDE, 
+														aColor, 
+														LIGHTNING_SPEED
+																			);
+								TE_SendToAll();
 							}
 
 
