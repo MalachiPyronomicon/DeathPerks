@@ -9,7 +9,11 @@
 // * 2013-07-24	-	0.1.1		-	initial test version
 // * 2013-07-25	-	0.1.2		-	add pumpkin spawn
 // * 2013-07-25	-	0.1.3		-	find ground to spawn pumpkin on
-// * 2013-07-26	-	0.1.4		-	add ball spawn
+// * 2013-07-26	-	0.1.4		-	add ball item
+// * 2013-07-26	-	0.1.5		-	add exploding oildrum item, add missing donator check, change Prop_Data to Prop_Send
+// * 							-	the event_player_death function is getting kinda ugly - mark for cleanup?
+// * 2013-07-27	-	0.1.6		-	add frog
+// * 2013-07-27	-	0.1.7		-	make frog explosive, fix ignored offset heights
 //	------------------------------------------------------------------------------------
 
 
@@ -24,30 +28,55 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.4"
+#define PLUGIN_VERSION	"0.1.7"
 
 // These define the text players see in the donator menu
-#define MENUTEXT_SPAWN_ITEM				"Spawn Item On Death"
+#define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
 #define MENUTITLE_SPAWN_ITEM			"Donator: Change Item Spawned On Death:"
 #define MENUSELECT_ITEM_NULL			"Off"
 #define MENUSELECT_ITEM_PUMPKIN			"Pumpkin (exploding)"
-#define MENUSELECT_ITEM_BALL			"Beach Ball"
+#define MENUSELECT_ITEM_BALL			"Beach Ball (bouncing)"
+#define MENUSELECT_ITEM_OILDRUM			"Barrel (exploding)"
+#define MENUSELECT_ITEM_FROG			"Frog (explosion)"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
 #define COOKIEDESCRIPTION_SPAWN_ITEM	"Spawn pumpkin/misc on donator death."
 
+// Entity names
 #define ENTITY_NAME_PUMPKIN				"tf_pumpkin_bomb"
+#define ENTITY_NAME_BALL				"prop_physics_multiplayer"
+#define ENTITY_NAME_OILDRUM				"prop_physics"
+#define ENTITY_NAME_FROG				"prop_dynamic"
+#define ENTITY_NAME_PROPANETANK			""
+#define ENTITY_NAME_EXPLOSION			"env_explosion"
 
+// Model paths
 #define MODEL_PATH_PUMPKIN				"models/props_halloween/pumpkin_explode.mdl"
 #define MODEL_PATH_BALL					"models/props_gameplay/ball001.mdl"
 #define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
+#define MODEL_PATH_FROG					"models/props_2fort/frog.mdl"
 #define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"		// HL2 content!
 
+// Vector angles
+#define VECTOR_ANGLE_DOWN				{90.0, 0.0, 0.0}							// vector angle pointing straight down
+#define VECTOR_ANGLE_PUMPKIN			{0.0, 0.0, 0.0}								// vector angle for pumpkin to spawn at
+#define VECTOR_ANGLE_BALL				{0.0, 0.0, 0.0}								// vector angle for beach ball to spawn at
+#define VECTOR_ANGLE_OILDRUM			{0.0, 0.0, 0.0}								// vector angle for oil drum to spawn at
+#define VECTOR_ANGLE_FROG				{0.0, 0.0, 0.0}								// vector angle for frog to spawn at
+#define VECTOR_ANGLE_PROPANETANK		{0.0, 0.0, 0.0}								// vector angle for propane tank to spawn at
+
 #define MAX_SPAWN_DISTANCE				1024.0											// max distance to spawn items beneath players
-#define OFFSET_HEIGHT_PUMPKIN			-2.0											// adjust height of pumpkins off ground
-#define OFFSET_HEIGHT_BALL				-2.0											// adjust height of beach balls off ground
+
+// Z-Axis offset heights
+#define OFFSET_HEIGHT_PUMPKIN			10.0											// adjust height of pumpkins off ground
+#define OFFSET_HEIGHT_BALL				-20.0											// adjust height of beach balls off ground
+#define OFFSET_HEIGHT_OILDRUM			30.0											// adjust height of oildrum off ground
+#define OFFSET_HEIGHT_FROG				0.0												// adjust height of propane tank off ground
+#define OFFSET_HEIGHT_PROPANETANK		0.0												// adjust height of propane tank off ground
+
 #define MASK_PROP_SPAWN					(CONTENTS_SOLID|CONTENTS_WINDOW|CONTENTS_GRATE)	// contents mask to spawn items on
+
 
 
 enum _:CookieActionType
@@ -55,8 +84,10 @@ enum _:CookieActionType
 	Action_Null = 0,
 	Action_Pumpkin = 1,
 	Action_Ball = 2,
-//	Action_Grave = 3,
-//	Action_Bird = 4,
+	Action_Oildrum = 3,
+	Action_Frog = 4,
+//	Action_Grave = 5,
+//	Action_Bird = 6,
 };
 
 
@@ -103,7 +134,8 @@ public OnAllPluginsLoaded()
 
 public OnMapStart()
 {
-//	PrecacheModel( g_sGravestoneMDL[i][0], true );
+	PrecacheModel(MODEL_PATH_OILDRUM);
+	PrecacheModel(MODEL_PATH_FROG);
 }
 
 
@@ -124,95 +156,242 @@ public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 
 public Action:event_player_death(Handle:event, const String:name[], bool:dontBroadcast)
 {
+	// Round ended check
 	if(!g_bRoundEnded)
-	{
 		return Plugin_Continue;
-	}
-	else
+
+	new iClient = GetClientOfUserId(GetEventInt(event, "userid"));
+		
+	// Donator check
+	if (!IsPlayerDonator(iClient)) 
+		return Plugin_Continue;
+		
+	decl String:iTmp[32];
+	new iSelected;
+
+	// Get player's choice of item to spawn
+	GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));	
+	iSelected = StringToInt(iTmp);
+
+	switch (iSelected)
 	{
-		new iClient = GetClientOfUserId(GetEventInt(event, "userid"));
-		decl String:iTmp[32];
-		new iSelected;
-
-		GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));	
-		iSelected = StringToInt(iTmp);
-
-		switch (iSelected)
+		case Action_Null:
 		{
-			case Action_Null:
-			{
-				PrintToChat (iClient, "[DeathPerks] Nothing spawned.");
-			}
-			
-			case Action_Pumpkin:
-			{
-				decl Float:vOrigin[3];
-				GetClientEyePosition(iClient, vOrigin);
-				decl Handle:TraceRay;
-				new Float:Angles[3] = {90.0, 0.0, 0.0};								// down
+			PrintToChat (iClient, "[DeathPerks] Nothing spawned.");
+		}
+		
+		case Action_Pumpkin:
+		{
+			decl Float:vOrigin[3];
+			GetClientEyePosition(iClient, vOrigin);
+			decl Handle:TraceRay;
+			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
 
-				TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
 
-				if (TR_DidHit(TraceRay))
+			if (TR_DidHit(TraceRay))
+			{
+				decl Float:Distance;
+				decl Float:vEnd[3];
+				TR_GetEndPosition(vEnd, TraceRay);
+				Distance = (GetVectorDistance(vOrigin, vEnd));
+
+				if (Distance < MAX_SPAWN_DISTANCE)
 				{
-					decl Float:Distance;
-					decl Float:vEnd[3];
-					TR_GetEndPosition(vEnd, TraceRay);
-					Distance = (GetVectorDistance(vOrigin, vEnd));
+					new iPumpkin = CreateEntityByName(ENTITY_NAME_PUMPKIN);
+					
+					if(IsValidEntity(iPumpkin))
+					{		
+						if(GetEntityCount() < GetMaxEntities()-32)
+						{
+							DispatchSpawn(iPumpkin);
+							vEnd[2] += OFFSET_HEIGHT_PUMPKIN;
 
-					if (Distance < MAX_SPAWN_DISTANCE)
-					{
-						new iPumpkin = CreateEntityByName(ENTITY_NAME_PUMPKIN);
-						
-						if(IsValidEntity(iPumpkin))
-						{		
-							if(GetEntityCount() < GetMaxEntities()-32)
-							{
-								DispatchSpawn(iPumpkin);
-								vOrigin[2] += 10.0;
-								TeleportEntity(iPumpkin, vEnd, NULL_VECTOR, NULL_VECTOR);
-								PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
-							}
-							else
-							{
-								PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn pumpkin, maxEntities reached.");
-							}
-							
+							new Float:ModelAngle[3] = VECTOR_ANGLE_PUMPKIN;
+							TeleportEntity(iPumpkin, vEnd, ModelAngle, NULL_VECTOR);
+							PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
 						}
 						else
 						{
-							PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, pumpkin spawn failed.");
+							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn pumpkin, maxEntities reached.");
 						}
+						
+					}
+					else
+					{
+						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, pumpkin spawn failed.");
 					}
 				}
-
-				CloseHandle(TraceRay);
 			}
-			
-			case Action_Ball:
+			else
 			{
-				new iBall = CreateEntityByName("prop_physics_multiplayer");
+				PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
+			}
+
+			CloseHandle(TraceRay);
+		}
+		
+		case Action_Ball:
+		{
+			new iBall = CreateEntityByName(ENTITY_NAME_BALL);
+			
+			if(IsValidEntity(iBall))
+			{
+				decl Float:vOrigin[3];
+				GetClientEyePosition(iClient, vOrigin);
 				
-				if(IsValidEntity(iBall))
-				{
-					decl Float:vOrigin[3];
-					GetClientEyePosition(iClient, vOrigin);
-					
-					DispatchKeyValue(iBall, "model", MODEL_PATH_BALL);
-					DispatchKeyValue(iBall, "disableshadows", "1");
-					DispatchKeyValue(iBall, "skin", "0");
-					DispatchKeyValue(iBall, "physicsmode", "1");
-					DispatchKeyValue(iBall, "spawnflags", "256");
-					DispatchSpawn(iBall);
-					TeleportEntity(iBall, vOrigin, NULL_VECTOR, NULL_VECTOR);
-					
-					PrintToChat (iClient, "[DeathPerks] Ball spawned.");
-				}
+				vOrigin[2] += OFFSET_HEIGHT_BALL;
+
+				DispatchKeyValue(iBall, "model", MODEL_PATH_BALL);
+				DispatchKeyValue(iBall, "disableshadows", "1");
+				DispatchKeyValue(iBall, "skin", "0");
+				DispatchKeyValue(iBall, "physicsmode", "1");
+				DispatchKeyValue(iBall, "spawnflags", "256");
+				DispatchSpawn(iBall);
+				
+				new Float:ModelAngle[3] = VECTOR_ANGLE_BALL;
+				TeleportEntity(iBall, vOrigin, ModelAngle, NULL_VECTOR);
+				
+				PrintToChat (iClient, "[DeathPerks] Ball spawned.");
 			}
 		}
+		
+		case Action_Oildrum:
+		{
+			decl Float:vOrigin[3];
+			GetClientEyePosition(iClient, vOrigin);
+			decl Handle:TraceRay;
+			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
+
+			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+			if (TR_DidHit(TraceRay))
+			{
+				decl Float:Distance;
+				decl Float:vEnd[3];
+				TR_GetEndPosition(vEnd, TraceRay);
+				Distance = (GetVectorDistance(vOrigin, vEnd));
+
+				if (Distance < MAX_SPAWN_DISTANCE)
+				{
+					new iOildrum = CreateEntityByName(ENTITY_NAME_OILDRUM);
+					
+					if(IsValidEntity(iOildrum))
+					{		
+						if(GetEntityCount() < GetMaxEntities()-32)
+						{
+							SetEntityModel(iOildrum, MODEL_PATH_OILDRUM);
+							vEnd[2] += OFFSET_HEIGHT_OILDRUM;
+
+							DispatchSpawn(iOildrum);
+							SetEntityMoveType(iOildrum, MOVETYPE_VPHYSICS);
+							SetEntProp(iOildrum, Prop_Send, "m_CollisionGroup", 5);
+							SetEntProp(iOildrum, Prop_Send, "m_nSolidType", 6);
+
+							new Float:ModelAngle[3] = VECTOR_ANGLE_OILDRUM;
+							TeleportEntity(iOildrum, vEnd, ModelAngle, NULL_VECTOR);
+							PrintToChat (iClient, "[DeathPerks] Oildrum spawned.");
+						}
+						else
+						{
+							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn oildrum, maxEntities reached.");
+						}
+						
+					}
+					else
+					{
+						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, oildrum spawn failed.");
+					}
+				}
+				else
+				{
+					PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
+				}
+			}
+
+			CloseHandle(TraceRay);
+		}
+
+		case Action_Frog:
+		{
+			decl Float:vOrigin[3];
+			GetClientEyePosition(iClient, vOrigin);
+			decl Handle:TraceRay;
+			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
+
+			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+			if (TR_DidHit(TraceRay))
+			{
+				decl Float:Distance;
+				decl Float:vEnd[3];
+				TR_GetEndPosition(vEnd, TraceRay);
+				Distance = (GetVectorDistance(vOrigin, vEnd));
+
+				if (Distance < MAX_SPAWN_DISTANCE)
+				{
+					new iFrog = CreateEntityByName(ENTITY_NAME_FROG);
+					
+					if(IsValidEntity(iFrog))
+					{		
+						if(GetEntityCount() < GetMaxEntities()-32)
+						{
+							SetEntityModel(iFrog, MODEL_PATH_FROG);
+							DispatchSpawn(iFrog);
+							vEnd[2] += OFFSET_HEIGHT_FROG;
+
+							new Float:ModelAngle[3] = VECTOR_ANGLE_FROG;
+							TeleportEntity(iFrog, vEnd, ModelAngle, NULL_VECTOR);
+
+							// Explosion
+							new hExplosion = CreateEntityByName(ENTITY_NAME_EXPLOSION);
+							DispatchKeyValue(hExplosion, "magnitude", "1000");
+							DispatchKeyValue(hExplosion, "spawnflags", "0");
+							DispatchKeyValue(hExplosion, "radius_override", "256");
+
+							if ( DispatchSpawn(hExplosion) )
+							{
+								ActivateEntity(hExplosion);
+								TeleportEntity(hExplosion, vEnd, NULL_VECTOR, NULL_VECTOR);
+								AcceptEntityInput(hExplosion, "Explode");
+								AcceptEntityInput(hExplosion, "Kill");
+							}
 
 
+							PrintToChat (iClient, "[DeathPerks] Frog spawned.");
+						}
+						else
+						{
+							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn frog, maxEntities reached.");
+						}
+						
+					}
+					else
+					{
+						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, frog spawn failed.");
+					}
+				}
+			}
+			else
+			{
+				PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
+			}
+
+			CloseHandle(TraceRay);
+		}
+		
+		// If we get here, the cookie hasn't been set properly - so set it!
+		// (do we really need this?)
+		default:
+		{
+			new String:iTemp[32];
+			IntToString(Action_Null, iTemp, sizeof(iTemp));
+			SetClientCookie(iClient, g_hDeathItemCookie, iTemp);		
+			PrintToChat (iClient, "[DeathPerks] Normalizing cookie - for extra yum!");
+		}
+		
 	}
+
 	
 	return Plugin_Continue;
 }
@@ -269,6 +448,34 @@ public Action:Panel_ChangeDeathItem(iClient)
 		new String:iCompare[32];
 		IntToString(Action_Ball, iCompare, sizeof(iCompare));
 		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_BALL, ITEMDRAW_DEFAULT);
+	}
+	
+	// Oildrum
+	if (_:iSelected == Action_Oildrum)
+	{
+		new String:iCompare[32];
+		IntToString(Action_Oildrum, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_OILDRUM, ITEMDRAW_DISABLED);
+	}
+	else
+	{
+		new String:iCompare[32];
+		IntToString(Action_Oildrum, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_OILDRUM, ITEMDRAW_DEFAULT);
+	}
+	
+	// Frog
+	if (_:iSelected == Action_Frog)
+	{
+		new String:iCompare[32];
+		IntToString(Action_Frog, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_FROG, ITEMDRAW_DISABLED);
+	}
+	else
+	{
+		new String:iCompare[32];
+		IntToString(Action_Frog, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_FROG, ITEMDRAW_DEFAULT);
 	}
 	
 	DisplayMenu(menu, iClient, 20);
