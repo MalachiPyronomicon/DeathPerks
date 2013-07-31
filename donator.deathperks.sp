@@ -15,6 +15,7 @@
 // * 2013-07-27	-	0.1.6		-	add frog
 // * 2013-07-27	-	0.1.7		-	make frog explosive, fix ignored offset heights
 // * 2013-07-27	-	0.1.8		-	add frog lightning, fix explosion keyvalues
+// * 2013-07-27	-	0.1.9		-	add timer to deal with explosion causing multple death events
 //	------------------------------------------------------------------------------------
 
 
@@ -29,7 +30,7 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.8"
+#define PLUGIN_VERSION	"0.1.9"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
@@ -87,8 +88,7 @@
 #define EXPLOSIONKEYVALUE_MAGNITUDE			"iMagnitude"							// Key value: Magnitude
 #define EXPLOSIONKEYVALUE_SPAWNFLAGS		"spawnflags"							// Key value: flags
 #define EXPLOSIONKEYVALUE_RADIUS			"iRadiusOverride"						// Key value: radius
-//#define EXPLOSION_MAGNITUDE					"1000"									// Magnitude
-#define EXPLOSION_MAGNITUDE					"0"									// Magnitude
+#define EXPLOSION_MAGNITUDE					"1000"									// Magnitude
 #define EXPLOSION_SPAWNFLAGS				"0"										// flags
 #define EXPLOSION_RADIUS					"256"									// radius
 
@@ -103,6 +103,10 @@
 #define LIGHTNING_AMPLITUDE				1.0											// Beam amplitude.
 #define LIGHTNING_COLOR					{255, 255, 255, 255}						// Color array (r, g, b, a).
 #define LIGHTNING_SPEED					3											// Speed of the beam.
+
+// Frog Parameters
+#define FROGTIMER_SPAWN_DELAY			0.5											// How soon after player death does frog spawn.
+
 
 
 enum _:CookieActionType
@@ -121,6 +125,8 @@ enum _:CookieActionType
 new Handle:g_hDeathItemCookie = INVALID_HANDLE;
 new bool:g_bRoundEnded = false;
 new g_iLightningSprite = 0;
+//new Handle:g_hTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
+new Handle:g_hFrogTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 
 
 public Plugin:myinfo = 
@@ -172,6 +178,16 @@ public DonatorMenu:ChangeDeathItemCallback(iClient) Panel_ChangeDeathItem(iClien
 
 public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 {
+	// Cleanup all timers on map end
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
+		{
+			KillTimer(g_hFrogTimerHandle[i]);
+			g_hFrogTimerHandle[i] = INVALID_HANDLE;
+		}
+	}
+
 	g_bRoundEnded = false;
 }
 
@@ -358,71 +374,13 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 
 				if (Distance < MAX_SPAWN_DISTANCE)
 				{
-					new iFrog = CreateEntityByName(ENTITY_NAME_FROG);
-					
-					if(IsValidEntity(iFrog))
-					{		
-						if(GetEntityCount() < GetMaxEntities()-32)
-						{
-							SetEntityModel(iFrog, MODEL_PATH_FROG);
-							DispatchSpawn(iFrog);
-							vEnd[2] += OFFSET_HEIGHT_FROG;
-
-							new Float:ModelAngle[3] = VECTOR_ANGLE_FROG;
-							TeleportEntity(iFrog, vEnd, ModelAngle, NULL_VECTOR);
-
-							// Explosion
-							new hExplosion = CreateEntityByName(ENTITY_NAME_EXPLOSION);
-							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_MAGNITUDE, EXPLOSION_MAGNITUDE);
-							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_SPAWNFLAGS, EXPLOSION_SPAWNFLAGS);
-							DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_RADIUS, EXPLOSION_RADIUS);
-
-							if ( DispatchSpawn(hExplosion) )
-							{
-								ActivateEntity(hExplosion);
-								TeleportEntity(hExplosion, vEnd, NULL_VECTOR, NULL_VECTOR);
-								AcceptEntityInput(hExplosion, "Explode");
-								AcceptEntityInput(hExplosion, "Kill");
-
-								// define where the lightning strike starts
-								new Float:vStart[3];
-								vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
-								vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
-								vStart[2] = vEnd[2] + 800;
-								
-								// define the color of the strike
-								new aColor[4] = LIGHTNING_COLOR;
-																
-								TE_SetupBeamPoints(		vStart, 
-														vEnd, 
-														g_iLightningSprite, 
-														LIGHTNING_HALOINDEX, 
-														LIGHTNING_STARTFRAME, 
-														LIGHTNING_FRAMERATE, 
-														LIGHTNING_LIFE, 
-														LIGHTNING_STARTWIDTH, 
-														LIGHTNING_ENDWIDTH, 
-														LIGHTNING_FADELENGTH, 
-														LIGHTNING_AMPLITUDE, 
-														aColor, 
-														LIGHTNING_SPEED
-																			);
-								TE_SendToAll();
-							}
-
-
-							PrintToChat (iClient, "[DeathPerks] Frog spawned.");
-						}
-						else
-						{
-							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn frog, maxEntities reached.");
-						}
-						
-					}
-					else
-					{
-						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, frog spawn failed.");
-					}
+					new Handle:pack;
+					g_hFrogTimerHandle[iClient] = CreateDataTimer(FROGTIMER_SPAWN_DELAY, CallSpawnFrog, pack);
+										
+					WritePackCell(pack, iClient);
+					WritePackFloat(pack, vEnd[0]);
+					WritePackFloat(pack, vEnd[1]);
+					WritePackFloat(pack, vEnd[2]);
 				}
 			}
 			else
@@ -560,6 +518,122 @@ public bool:TraceRayProp(entityhit, mask)
 		return true;
 	}
 	return false;
+}
+
+
+// timer: spawn donator frog/lightning/explosion
+public Action:CallSpawnFrog(Handle:Timer, Handle:pack)
+{
+	// Set to the beginning and unpack it
+	ResetPack(pack);
+	new iClient = ReadPackCell(pack);
+
+	decl Float:vEnd[3];
+	vEnd[0] = ReadPackFloat(pack);
+	vEnd[1] = ReadPackFloat(pack);
+	vEnd[2] = ReadPackFloat(pack);
+	
+//	PrintToChat (iClient, "[DeathPerks] Attempting to create frog at (%f, %f, %f) for client #%d.", vEnd[0], vEnd[1], vEnd[2], iClient);
+
+	new iFrog = CreateEntityByName(ENTITY_NAME_FROG);
+	
+	if(IsValidEntity(iFrog))
+	{		
+		if(GetEntityCount() < GetMaxEntities()-32)
+		{
+			SetEntityModel(iFrog, MODEL_PATH_FROG);
+			DispatchSpawn(iFrog);
+			vEnd[2] += OFFSET_HEIGHT_FROG;
+
+			new Float:ModelAngle[3] = VECTOR_ANGLE_FROG;
+			TeleportEntity(iFrog, vEnd, ModelAngle, NULL_VECTOR);
+
+			// Explosion
+			new hExplosion = CreateEntityByName(ENTITY_NAME_EXPLOSION);
+			DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_MAGNITUDE, EXPLOSION_MAGNITUDE);
+			DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_SPAWNFLAGS, EXPLOSION_SPAWNFLAGS);
+			DispatchKeyValue(hExplosion, EXPLOSIONKEYVALUE_RADIUS, EXPLOSION_RADIUS);
+
+			if ( DispatchSpawn(hExplosion) )
+			{
+				ActivateEntity(hExplosion);
+				TeleportEntity(hExplosion, vEnd, NULL_VECTOR, NULL_VECTOR);
+				AcceptEntityInput(hExplosion, "Explode");
+				AcceptEntityInput(hExplosion, "Kill");
+
+				// define where the lightning strike starts
+				new Float:vStart[3];
+				vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
+				vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
+				vStart[2] = vEnd[2] + 800;
+				
+				// define the color of the strike
+				new aColor[4] = LIGHTNING_COLOR;
+												
+				TE_SetupBeamPoints(		vStart, 
+										vEnd, 
+										g_iLightningSprite, 
+										LIGHTNING_HALOINDEX, 
+										LIGHTNING_STARTFRAME, 
+										LIGHTNING_FRAMERATE, 
+										LIGHTNING_LIFE, 
+										LIGHTNING_STARTWIDTH, 
+										LIGHTNING_ENDWIDTH, 
+										LIGHTNING_FADELENGTH, 
+										LIGHTNING_AMPLITUDE, 
+										aColor, 
+										LIGHTNING_SPEED
+															);
+				TE_SendToAll();
+			}
+
+
+			PrintToChat (iClient, "[DeathPerks] Frog spawned.");
+		}
+		else
+		{
+			PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn frog, maxEntities reached.");
+		}
+		
+	}
+	else
+	{
+		PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, frog spawn failed.");
+	}
+
+
+	g_hFrogTimerHandle[iClient] = INVALID_HANDLE;
+
+}
+
+
+// Cleanup when player leaves
+public OnClientDisconnect(client)
+{
+	// kill timer if we quickly disconnect
+	if(g_hFrogTimerHandle[client] != INVALID_HANDLE)
+	{
+		KillTimer(g_hFrogTimerHandle[client]);
+		g_hFrogTimerHandle[client] = INVALID_HANDLE;
+	}
+	
+}
+
+
+// Cleanup all timers on map end
+public OnMapEnd()
+{
+
+	// Kill timers for all players
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
+		{
+			KillTimer(g_hFrogTimerHandle[i]);
+			g_hFrogTimerHandle[i] = INVALID_HANDLE;
+		}
+	}
+
 }
 
 
