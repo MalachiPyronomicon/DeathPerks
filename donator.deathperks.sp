@@ -16,25 +16,21 @@
 // * 2013-07-27	-	0.1.7		-	make frog explosive, fix ignored offset heights
 // * 2013-07-27	-	0.1.8		-	add frog lightning, fix explosion keyvalues
 // * 2013-07-27	-	0.1.9		-	add timer to deal with explosion causing multple death events
-// * 2013-07-31	-	0.1.10		-	adjust explosion/lightning values
-// * 2013-07-31	-	0.1.11		-	add sentry buster
 //	------------------------------------------------------------------------------------
 
 
 // INCLUDES
 #include <sourcemod>
 #include <donator>
-#include <clientprefs>							// cookies
+#include <clientprefs>
 #include <sdktools>
-#include <tf2_stocks>							// TF2_SetPlayerClass
-//#include <tf2items>							// SpawnWeapon
 
 
 #pragma semicolon 1
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.11"
+#define PLUGIN_VERSION	"0.1.9"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
@@ -44,7 +40,6 @@
 #define MENUSELECT_ITEM_BALL			"Beach Ball (bouncing)"
 #define MENUSELECT_ITEM_OILDRUM			"Barrel (exploding)"
 #define MENUSELECT_ITEM_FROG			"Frog (lightning)"
-#define MENUSELECT_ITEM_SENTRYBUSTER	"Sentry Buster"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
@@ -64,7 +59,6 @@
 #define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
 #define MODEL_PATH_FROG					"models/props_2fort/frog.mdl"
 #define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"	// HL2 content!
-#define MODEL_PATH_SENTRYBSTR			"models/bots/demo/bot_sentry_buster.mdl"
 
 // Sprite paths
 #define SPRITE_PATH_LIGHTNING			"sprites/lgtning.vmt"
@@ -94,7 +88,7 @@
 #define EXPLOSIONKEYVALUE_MAGNITUDE			"iMagnitude"							// Key value: Magnitude
 #define EXPLOSIONKEYVALUE_SPAWNFLAGS		"spawnflags"							// Key value: flags
 #define EXPLOSIONKEYVALUE_RADIUS			"iRadiusOverride"						// Key value: radius
-#define EXPLOSION_MAGNITUDE					"500"									// Magnitude
+#define EXPLOSION_MAGNITUDE					"1000"									// Magnitude
 #define EXPLOSION_SPAWNFLAGS				"0"										// flags
 #define EXPLOSION_RADIUS					"256"									// radius
 
@@ -102,20 +96,16 @@
 #define LIGHTNING_HALOINDEX				0											// Precached model index.
 #define LIGHTNING_STARTFRAME			0											// Initital frame to render.
 #define LIGHTNING_FRAMERATE				0											// Beam frame rate.
-#define LIGHTNING_LIFE					0.4											// Time duration of the beam.
+#define LIGHTNING_LIFE					0.2											// Time duration of the beam.
 #define LIGHTNING_STARTWIDTH			20.0										// Initial beam width.
 #define LIGHTNING_ENDWIDTH				10.0										// Final beam width.
 #define LIGHTNING_FADELENGTH			0											// Beam fade time duration.
 #define LIGHTNING_AMPLITUDE				1.0											// Beam amplitude.
-#define LIGHTNING_COLOR					{245, 245, 255, 255}						// Color array (r, g, b, a).
+#define LIGHTNING_COLOR					{255, 255, 255, 255}						// Color array (r, g, b, a).
 #define LIGHTNING_SPEED					3											// Speed of the beam.
 
 // Frog Parameters
 #define FROGTIMER_SPAWN_DELAY			0.5											// How soon after player death does frog spawn.
-
-// Sentry Buster Parameters
-#define SENTRYBSTR_JUMP_SCALE			2.0											// How soon after player death does frog spawn.
-#define SENTRYBSTR_MINIBOSS_SCALE		1.75										// How soon after player death does frog spawn.
 
 
 
@@ -126,9 +116,8 @@ enum _:CookieActionType
 	Action_Ball = 2,
 	Action_Oildrum = 3,
 	Action_Frog = 4,
-	Action_Sentrybuster = 5,
-//	Action_Grave = 6,
-//	Action_Bird = 7,
+//	Action_Grave = 5,
+//	Action_Bird = 6,
 };
 
 
@@ -205,66 +194,6 @@ public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 
 public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 {	
-	for (new iClient = 1; iClient <= MaxClients; iClient++)
-	{
-		// Client valid check
-		if (IsClientInGame(iClient))
-		{
-			// Donator check
-			if (IsPlayerDonator(iClient))
-			{
-				// Alive check
-				if (IsPlayerAlive(iClient))
-				{
-
-					decl String:iTmp[32];
-					
-					// Get player's choice of item to spawn
-					GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));	
-
-					new iSelected = StringToInt(iTmp);
-					
-					// if selected, make them sentrybuster
-					if (iSelected == Action_Sentrybuster)
-					{
-						PrintToChat (iClient, "[DeathPerks] You have become the SentryBuster!");
-
-						if (TF2_GetPlayerClass(iClient) != TFClass_DemoMan) 
-							TF2_SetPlayerClass(iClient, TFClass_DemoMan);
-							
-						TF2_RemoveAllWeapons(iClient);
-						
-						new String:atts[128];
-						
-						Format(atts, sizeof(atts), "26 ; 2325 ; "); 												// +2325 max HP (2500)
-						Format(atts, sizeof(atts), "%s107 ; 2.0 ; ", atts); 										// +100% move speed (520 Hammer units/s, as fast as possible; actual Buster is 560)
-						Format(atts, sizeof(atts), "%s252 ; 0.5 ; ", atts); 										// -50% damage force to user
-						Format(atts, sizeof(atts), "%s329 ; 0.5 ; ", atts); 										// -50% airblast power vs user
-						Format(atts, sizeof(atts), "%s330 ; 7 ; ", atts);											// Override footstep sound set
-						Format(atts, sizeof(atts), "%s402 ; 1 ; ", atts); 											// Cannot be backstabbed
-						Format(atts, sizeof(atts), "%s326 ; %f ; ", atts, SENTRYBSTR_JUMP_SCALE); 					// +-100% jump height (jumping disabled)
-						Format(atts, sizeof(atts), "%s138 ; 0 ; ", atts); 											// -100% damage to players (0)
-						Format(atts, sizeof(atts), "%s137 ; 38.461540 ; ", atts);									// +3746% damage to buildings (2500)
-						Format(atts, sizeof(atts), "%s275 ; 1", atts); 												// User never takes fall damage
-						
-						new wepEnt = SpawnWeapon(iClient, "tf_weapon_stickbomb", 307, 10, 6, atts);
-						
-						if (IsValidEntity(wepEnt)) 
-							SetEntPropEnt(iClient, Prop_Send, "m_hActiveWeapon", wepEnt);
-							
-						SetEntProp(wepEnt, Prop_Send, "m_iDetonated", 1);
-//						SetEntityHealth(iClient, 2500);
-						SetVariantString(MODEL_PATH_SENTRYBSTR);
-						AcceptEntityInput(iClient, "SetCustomModel");
-						SetEntProp(iClient, Prop_Send, "m_bUseClassAnimations", 1);
-						SetEntPropFloat(iClient, Prop_Send, "m_flModelScale", SENTRYBSTR_MINIBOSS_SCALE);
-					
-					}
-				}
-			}	
-		}
-	}
-	
 	g_bRoundEnded = true;
 }
 
@@ -461,7 +390,7 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 
 			CloseHandle(TraceRay);
 		}
-				
+		
 		// If we get here, the cookie hasn't been set properly - so set it!
 		// (do we really need this?)
 		default:
@@ -558,20 +487,6 @@ public Action:Panel_ChangeDeathItem(iClient)
 		new String:iCompare[32];
 		IntToString(Action_Frog, iCompare, sizeof(iCompare));
 		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_FROG, ITEMDRAW_DEFAULT);
-	}
-	
-	// Sentry Buster
-	if (_:iSelected == Action_Sentrybuster)
-	{
-		new String:iCompare[32];
-		IntToString(Action_Sentrybuster, iCompare, sizeof(iCompare));
-		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_SENTRYBUSTER, ITEMDRAW_DISABLED);
-	}
-	else
-	{
-		new String:iCompare[32];
-		IntToString(Action_Sentrybuster, iCompare, sizeof(iCompare));
-		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_SENTRYBUSTER, ITEMDRAW_DEFAULT);
 	}
 	
 	DisplayMenu(menu, iClient, 20);
