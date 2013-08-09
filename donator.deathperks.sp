@@ -16,6 +16,7 @@
 // * 2013-07-27	-	0.1.7		-	make frog explosive, fix ignored offset heights
 // * 2013-07-27	-	0.1.8		-	add frog lightning, fix explosion keyvalues
 // * 2013-07-27	-	0.1.9		-	add timer to deal with explosion causing multple death events
+// * 2013-07-27	-	0.1.10		-	adjust explosion/lightning values
 //	------------------------------------------------------------------------------------
 
 
@@ -30,7 +31,7 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.9"
+#define PLUGIN_VERSION	"0.1.10"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
@@ -88,7 +89,7 @@
 #define EXPLOSIONKEYVALUE_MAGNITUDE			"iMagnitude"							// Key value: Magnitude
 #define EXPLOSIONKEYVALUE_SPAWNFLAGS		"spawnflags"							// Key value: flags
 #define EXPLOSIONKEYVALUE_RADIUS			"iRadiusOverride"						// Key value: radius
-#define EXPLOSION_MAGNITUDE					"1000"									// Magnitude
+#define EXPLOSION_MAGNITUDE					"500"									// Magnitude
 #define EXPLOSION_SPAWNFLAGS				"0"										// flags
 #define EXPLOSION_RADIUS					"256"									// radius
 
@@ -96,7 +97,7 @@
 #define LIGHTNING_HALOINDEX				0											// Precached model index.
 #define LIGHTNING_STARTFRAME			0											// Initital frame to render.
 #define LIGHTNING_FRAMERATE				0											// Beam frame rate.
-#define LIGHTNING_LIFE					0.2											// Time duration of the beam.
+#define LIGHTNING_LIFE					0.5											// Time duration of the beam.
 #define LIGHTNING_STARTWIDTH			20.0										// Initial beam width.
 #define LIGHTNING_ENDWIDTH				10.0										// Final beam width.
 #define LIGHTNING_FADELENGTH			0											// Beam fade time duration.
@@ -374,6 +375,31 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 
 				if (Distance < MAX_SPAWN_DISTANCE)
 				{
+					// define where the lightning strike starts
+					new Float:vStart[3];
+					vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
+					vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
+					vStart[2] = vEnd[2] + 800;
+					
+					// define the color of the strike
+					new aColor[4] = LIGHTNING_COLOR;
+													
+					TE_SetupBeamPoints(		vStart, 
+											vEnd, 
+											g_iLightningSprite, 
+											LIGHTNING_HALOINDEX, 
+											LIGHTNING_STARTFRAME, 
+											LIGHTNING_FRAMERATE, 
+											LIGHTNING_LIFE, 
+											LIGHTNING_STARTWIDTH, 
+											LIGHTNING_ENDWIDTH, 
+											LIGHTNING_FADELENGTH, 
+											LIGHTNING_AMPLITUDE, 
+											aColor, 
+											LIGHTNING_SPEED
+																);
+					TE_SendToAll();
+
 					new Handle:pack;
 					g_hFrogTimerHandle[iClient] = CreateDataTimer(FROGTIMER_SPAWN_DELAY, CallSpawnFrog, pack);
 										
@@ -560,31 +586,6 @@ public Action:CallSpawnFrog(Handle:Timer, Handle:pack)
 				TeleportEntity(hExplosion, vEnd, NULL_VECTOR, NULL_VECTOR);
 				AcceptEntityInput(hExplosion, "Explode");
 				AcceptEntityInput(hExplosion, "Kill");
-
-				// define where the lightning strike starts
-				new Float:vStart[3];
-				vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
-				vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
-				vStart[2] = vEnd[2] + 800;
-				
-				// define the color of the strike
-				new aColor[4] = LIGHTNING_COLOR;
-												
-				TE_SetupBeamPoints(		vStart, 
-										vEnd, 
-										g_iLightningSprite, 
-										LIGHTNING_HALOINDEX, 
-										LIGHTNING_STARTFRAME, 
-										LIGHTNING_FRAMERATE, 
-										LIGHTNING_LIFE, 
-										LIGHTNING_STARTWIDTH, 
-										LIGHTNING_ENDWIDTH, 
-										LIGHTNING_FADELENGTH, 
-										LIGHTNING_AMPLITUDE, 
-										aColor, 
-										LIGHTNING_SPEED
-															);
-				TE_SendToAll();
 			}
 
 
