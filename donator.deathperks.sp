@@ -17,6 +17,8 @@
 // * 2013-07-27	-	0.1.8		-	add frog lightning, fix explosion keyvalues
 // * 2013-07-27	-	0.1.9		-	add timer to deal with explosion causing multple death events
 // * 2013-07-27	-	0.1.10		-	adjust explosion/lightning values
+// * 2013-08-09	-	0.1.11		-	unused
+// * 2013-08-09	-	0.1.12		-	add ghost - handle remnant particle/glow effects, use array to enable/disable
 //	------------------------------------------------------------------------------------
 
 
@@ -31,7 +33,7 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.10"
+#define PLUGIN_VERSION	"0.1.12"
 
 // These define the text players see in the donator menu
 #define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
@@ -41,6 +43,7 @@
 #define MENUSELECT_ITEM_BALL			"Beach Ball (bouncing)"
 #define MENUSELECT_ITEM_OILDRUM			"Barrel (exploding)"
 #define MENUSELECT_ITEM_FROG			"Frog (lightning)"
+#define MENUSELECT_ITEM_GHOST			"Ghost"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
@@ -53,6 +56,7 @@
 #define ENTITY_NAME_FROG				"prop_dynamic"
 #define ENTITY_NAME_PROPANETANK			""
 #define ENTITY_NAME_EXPLOSION			"env_explosion"
+#define ENTITY_NAME_GHOST				""
 
 // Model paths
 #define MODEL_PATH_PUMPKIN				"models/props_halloween/pumpkin_explode.mdl"
@@ -60,6 +64,7 @@
 #define MODEL_PATH_OILDRUM				"models/props_c17/oildrum001_explosive.mdl"
 #define MODEL_PATH_FROG					"models/props_2fort/frog.mdl"
 #define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"	// HL2 content!
+#define MODEL_PATH_GHOST				"models/props_halloween/ghost.mdl"
 
 // Sprite paths
 #define SPRITE_PATH_LIGHTNING			"sprites/lgtning.vmt"
@@ -108,6 +113,10 @@
 // Frog Parameters
 #define FROGTIMER_SPAWN_DELAY			0.5											// How soon after player death does frog spawn.
 
+// Ghost Parameters
+#define GHOSTPOV_DISABLE			0											// turn off third person pov
+#define GHOSTPOV_ENABLE				2											// turn on third person pov
+
 
 
 enum _:CookieActionType
@@ -117,8 +126,9 @@ enum _:CookieActionType
 	Action_Ball = 2,
 	Action_Oildrum = 3,
 	Action_Frog = 4,
-//	Action_Grave = 5,
-//	Action_Bird = 6,
+	Action_Ghost = 5
+//	Action_Grave = 6,
+//	Action_Bird = 7,
 };
 
 
@@ -126,8 +136,8 @@ enum _:CookieActionType
 new Handle:g_hDeathItemCookie = INVALID_HANDLE;
 new bool:g_bRoundEnded = false;
 new g_iLightningSprite = 0;
-//new Handle:g_hTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 new Handle:g_hFrogTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
+new g_iGhostModel[MAXPLAYERS + 1] = {0, ...};
 
 
 public Plugin:myinfo = 
@@ -170,6 +180,7 @@ public OnMapStart()
 {
 	PrecacheModel(MODEL_PATH_OILDRUM);
 	PrecacheModel(MODEL_PATH_FROG);
+	PrecacheModel(MODEL_PATH_GHOST);
 	g_iLightningSprite = PrecacheModel(SPRITE_PATH_LIGHTNING);
 }
 
@@ -189,6 +200,32 @@ public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 		}
 	}
 
+	// Undo Ghost
+	for (new iClientIdx = 1; iClientIdx <= MaxClients; iClientIdx++)
+	{
+		// Is client in game?
+		if (g_iGhostModel[iClientIdx] == 1)
+		{
+			// remember who we made ghost
+			g_iGhostModel[iClientIdx] = 0;
+
+			// Is client in game?
+			if (IsClientInGame(iClientIdx))
+			{
+				// unset ghost model
+				SetVariantString("");
+				AcceptEntityInput(iClientIdx, "SetCustomModel");
+
+				// disable Third person
+				SetVariantInt(GHOSTPOV_DISABLE);
+				AcceptEntityInput(iClientIdx, "SetForcedTauntCam");
+				
+				// disable fly mode
+				SetEntityMoveType(iClientIdx, MOVETYPE_WALK);
+			}
+		}
+	}
+
 	g_bRoundEnded = false;
 }
 
@@ -196,6 +233,53 @@ public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 {	
 	g_bRoundEnded = true;
+	
+	// Handle Ghost
+	for (new iClientIdx = 1; iClientIdx <= MaxClients; iClientIdx++)
+	{
+		// Is client in game?
+		if (IsClientInGame(iClientIdx))
+		{
+			// Is this client fake?
+			if (!IsFakeClient(iClientIdx))
+			{
+				// Is this client a donator?
+				if (IsPlayerDonator(iClientIdx))
+				{
+					decl String:iTmp[32];
+					new iSelected;
+
+					GetClientCookie(iClientIdx, g_hDeathItemCookie, iTmp, sizeof(iTmp));
+					iSelected = StringToInt(iTmp);
+
+					if (_:iSelected == Action_Ghost)
+					{
+						// remember who we made ghost
+						g_iGhostModel[iClientIdx] = 1;
+
+						// set model
+						SetVariantString(MODEL_PATH_GHOST);
+						AcceptEntityInput(iClientIdx, "SetCustomModel");
+
+						// Third person
+						SetVariantInt(GHOSTPOV_ENABLE);
+						AcceptEntityInput(iClientIdx, "SetForcedTauntCam");
+						
+						// enable fly mode
+						SetEntityMoveType(iClientIdx, MOVETYPE_FLY);
+						
+						// Disable particles?
+						SetVariantString("ParticleEffectStop");
+						AcceptEntityInput(iClientIdx, "DispatchEffect");
+
+						// Disable glow
+						SetEntProp(iClientIdx, Prop_Send, "m_bGlowEnabled", 0);
+					}
+				}
+			}
+		}
+	}
+
 }
 
 
@@ -513,6 +597,20 @@ public Action:Panel_ChangeDeathItem(iClient)
 		new String:iCompare[32];
 		IntToString(Action_Frog, iCompare, sizeof(iCompare));
 		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_FROG, ITEMDRAW_DEFAULT);
+	}
+	
+	// Ghost
+	if (_:iSelected == Action_Ghost)
+	{
+		new String:iCompare[32];
+		IntToString(Action_Ghost, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_GHOST, ITEMDRAW_DISABLED);
+	}
+	else
+	{
+		new String:iCompare[32];
+		IntToString(Action_Ghost, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_GHOST, ITEMDRAW_DEFAULT);
 	}
 	
 	DisplayMenu(menu, iClient, 20);
