@@ -19,6 +19,8 @@
 // * 2013-07-27	-	0.1.10		-	adjust explosion/lightning values
 // * 2013-08-09	-	0.1.11		-	unused
 // * 2013-08-09	-	0.1.12		-	add ghost - handle remnant particle/glow effects, use array to enable/disable
+// * 2013-08-17	-	0.1.13		-	add ball scale, disable ghost until particle/glow is fixed
+// * 2013-11-03	-	0.1.14		-	use newly added tfcondition ghost mode, trigger oildrum+pumpkin to explode, disable ball scale
 //	------------------------------------------------------------------------------------
 
 
@@ -27,23 +29,25 @@
 #include <donator>
 #include <clientprefs>
 #include <sdktools>
-
+#include <tf2>					// TF2_AddCondition
+#include <tf2_stocks>			// TF2_IsPlayerInCondition
+#include <sdkhooks>				// SDKHooks_TakeDamage
 
 #pragma semicolon 1
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.12"
+#define PLUGIN_VERSION	"0.1.14"
 
 // These define the text players see in the donator menu
-#define MENUTEXT_SPAWN_ITEM				"Spawn After-round Item On Death"
-#define MENUTITLE_SPAWN_ITEM			"Donator: Change Item Spawned On Death:"
-#define MENUSELECT_ITEM_NULL			"Off"
-#define MENUSELECT_ITEM_PUMPKIN			"Pumpkin (exploding)"
-#define MENUSELECT_ITEM_BALL			"Beach Ball (bouncing)"
-#define MENUSELECT_ITEM_OILDRUM			"Barrel (exploding)"
-#define MENUSELECT_ITEM_FROG			"Frog (lightning)"
-#define MENUSELECT_ITEM_GHOST			"Ghost"
+#define MENUTEXT_SPAWN_ITEM				"After-round Perks"
+#define MENUTITLE_SPAWN_ITEM			"Donator: Change After-round Perk:"
+#define MENUSELECT_ITEM_NULL			"Disabled"
+#define MENUSELECT_ITEM_PUMPKIN			"Pumpkin on Death"
+#define MENUSELECT_ITEM_BALL			"Beach Ball on Death"
+#define MENUSELECT_ITEM_OILDRUM			"Barrel on Death"
+#define MENUSELECT_ITEM_FROG			"Frog on Death"
+#define MENUSELECT_ITEM_GHOST			"Ghost Mode"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
@@ -65,6 +69,7 @@
 #define MODEL_PATH_FROG					"models/props_2fort/frog.mdl"
 #define MODEL_PATH_PROPANETANK			"models/props_junk/propane_tank001a.mdl"	// HL2 content!
 #define MODEL_PATH_GHOST				"models/props_halloween/ghost.mdl"
+//#define MODEL_PATH_GHOST				"models/props_halloween/ghost_no_hat.mdl"	// alternate ghost model
 
 // Sprite paths
 #define SPRITE_PATH_LIGHTNING			"sprites/lgtning.vmt"
@@ -102,21 +107,40 @@
 #define LIGHTNING_HALOINDEX				0											// Precached model index.
 #define LIGHTNING_STARTFRAME			0											// Initital frame to render.
 #define LIGHTNING_FRAMERATE				0											// Beam frame rate.
-#define LIGHTNING_LIFE					0.5											// Time duration of the beam.
+#define LIGHTNING_LIFE					0.75										// Time duration of the beam.
 #define LIGHTNING_STARTWIDTH			20.0										// Initial beam width.
 #define LIGHTNING_ENDWIDTH				10.0										// Final beam width.
 #define LIGHTNING_FADELENGTH			0											// Beam fade time duration.
 #define LIGHTNING_AMPLITUDE				1.0											// Beam amplitude.
 #define LIGHTNING_COLOR					{255, 255, 255, 255}						// Color array (r, g, b, a).
 #define LIGHTNING_SPEED					3											// Speed of the beam.
+#define LIGHTNING_SOUND_THUNDER 		"ambient/explosions/explode_9.wav"
+
+// Ball Parameters
+#define BALLPARAM_SCALE					2.0											// Scale of ball
 
 // Frog Parameters
-#define FROGTIMER_SPAWN_DELAY			0.5											// How soon after player death does frog spawn.
+#define FROGTIMER_SPAWN_DELAY			0.75										// How soon after player death does frog spawn.
+
+// Drum Parameters
+#define DRUMTIMER_EXPLODE_DELAY			1.5											// How soon after player death does drum explode.
+#define DRUMTIMER_EXPLODE_DAMAGE		100.0										// Amount of damage to make drum explode.
+
+// Pumpkin Parameters
+#define PUMPKINTIMER_EXPLODE_DELAY		1.5											// How soon after player death does drum explode.
+#define PUMPKINTIMER_EXPLODE_DAMAGE		100.0										// Amount of damage to make drum explode.
 
 // Ghost Parameters
-#define GHOSTPOV_DISABLE			0											// turn off third person pov
-#define GHOSTPOV_ENABLE				2											// turn on third person pov
-
+#define GHOSTPOV_DISABLE			0												// turn off third person pov
+#define GHOSTPOV_ENABLE				2												// turn on third person pov
+#define TFCONDITION_GHOST			TFCond_HalloweenGhostMode						// the tf condition # for ghost mode
+#define	SOUND_NAME_GHOST_1			"vo/halloween_boo1.wav"
+#define	SOUND_NAME_GHOST_2			"vo/halloween_boo2.wav"
+#define	SOUND_NAME_GHOST_3			"vo/halloween_boo3.wav"
+#define	SOUND_NAME_GHOST_4			"vo/halloween_boo4.wav"
+#define	SOUND_NAME_GHOST_5			"vo/halloween_boo5.wav"
+#define	SOUND_NAME_GHOST_6			"vo/halloween_boo6.wav"
+#define	SOUND_NAME_GHOST_7			"vo/halloween_boo7.wav"
 
 
 enum _:CookieActionType
@@ -137,14 +161,15 @@ new Handle:g_hDeathItemCookie = INVALID_HANDLE;
 new bool:g_bRoundEnded = false;
 new g_iLightningSprite = 0;
 new Handle:g_hFrogTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
-new g_iGhostModel[MAXPLAYERS + 1] = {0, ...};
+new Handle:g_hDrumTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
+new Handle:g_hPumpkinTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 
 
 public Plugin:myinfo = 
 {
 	name = "Donator Death Perks",
 	author = "Malachi",
-	description = "during afterround, spawns pumpkin/item on donator death",
+	description = "handles after-round donator perks",
 	version = PLUGIN_VERSION,
 	url = "www.necrophix.com"
 }
@@ -171,6 +196,9 @@ public OnAllPluginsLoaded()
 {
 	if(!LibraryExists("donator.core"))
 		SetFailState("[Donator:DeathPerks] Unable to find plugin: Basic Donator Interface");
+
+	if(GetExtensionFileStatus("sdkhooks.ext") < 1)
+		SetFailState("[Donator:DeathPerks] SDK Hooks is not loaded.");
 		
 	Donator_RegisterMenuItem(MENUTEXT_SPAWN_ITEM, ChangeDeathItemCallback);
 }
@@ -178,10 +206,19 @@ public OnAllPluginsLoaded()
 
 public OnMapStart()
 {
-	PrecacheModel(MODEL_PATH_OILDRUM);
-	PrecacheModel(MODEL_PATH_FROG);
-	PrecacheModel(MODEL_PATH_GHOST);
-	g_iLightningSprite = PrecacheModel(SPRITE_PATH_LIGHTNING);
+	PrecacheModel(MODEL_PATH_OILDRUM, true);
+	PrecacheModel(MODEL_PATH_FROG, true);
+	PrecacheModel(MODEL_PATH_PUMPKIN, true);
+	PrecacheModel(MODEL_PATH_GHOST, true);
+	PrecacheSound(SOUND_NAME_GHOST_1, true);
+	PrecacheSound(SOUND_NAME_GHOST_2, true);
+	PrecacheSound(SOUND_NAME_GHOST_3, true);
+	PrecacheSound(SOUND_NAME_GHOST_4, true);
+	PrecacheSound(SOUND_NAME_GHOST_5, true);
+	PrecacheSound(SOUND_NAME_GHOST_6, true);
+	PrecacheSound(SOUND_NAME_GHOST_7, true);
+	PrecacheSound(LIGHTNING_SOUND_THUNDER, true);
+	g_iLightningSprite = PrecacheModel(SPRITE_PATH_LIGHTNING, true);
 }
 
 
@@ -190,7 +227,7 @@ public DonatorMenu:ChangeDeathItemCallback(iClient) Panel_ChangeDeathItem(iClien
 
 public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 {
-	// Cleanup all timers on map end
+	// Cleanup all frogs
 	for(new i = 0; i < (MAXPLAYERS + 1); i++)
 	{
 		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
@@ -200,33 +237,28 @@ public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 		}
 	}
 
-	// Undo Ghost
-	for (new iClientIdx = 1; iClientIdx <= MaxClients; iClientIdx++)
+	// Cleanup all drums
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
 	{
-		// Is client in game?
-		if (g_iGhostModel[iClientIdx] == 1)
+		if(g_hDrumTimerHandle[i] != INVALID_HANDLE)
 		{
-			// remember who we made ghost
-			g_iGhostModel[iClientIdx] = 0;
+			KillTimer(g_hDrumTimerHandle[i]);
+			g_hDrumTimerHandle[i] = INVALID_HANDLE;
+		}
+	}
 
-			// Is client in game?
-			if (IsClientInGame(iClientIdx))
-			{
-				// unset ghost model
-				SetVariantString("");
-				AcceptEntityInput(iClientIdx, "SetCustomModel");
-
-				// disable Third person
-				SetVariantInt(GHOSTPOV_DISABLE);
-				AcceptEntityInput(iClientIdx, "SetForcedTauntCam");
-				
-				// disable fly mode
-				SetEntityMoveType(iClientIdx, MOVETYPE_WALK);
-			}
+	// Cleanup all pumpkins
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(g_hPumpkinTimerHandle[i] != INVALID_HANDLE)
+		{
+			KillTimer(g_hPumpkinTimerHandle[i]);
+			g_hPumpkinTimerHandle[i] = INVALID_HANDLE;
 		}
 	}
 
 	g_bRoundEnded = false;
+
 }
 
 
@@ -254,26 +286,16 @@ public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 
 					if (_:iSelected == Action_Ghost)
 					{
-						// remember who we made ghost
-						g_iGhostModel[iClientIdx] = 1;
-
-						// set model
-						SetVariantString(MODEL_PATH_GHOST);
-						AcceptEntityInput(iClientIdx, "SetCustomModel");
-
-						// Third person
-						SetVariantInt(GHOSTPOV_ENABLE);
-						AcceptEntityInput(iClientIdx, "SetForcedTauntCam");
-						
-						// enable fly mode
-						SetEntityMoveType(iClientIdx, MOVETYPE_FLY);
-						
-						// Disable particles?
-						SetVariantString("ParticleEffectStop");
-						AcceptEntityInput(iClientIdx, "DispatchEffect");
-
-						// Disable glow
-						SetEntProp(iClientIdx, Prop_Send, "m_bGlowEnabled", 0);
+						// apparently will crash server if you try to set this twice (like on plr_hightower_event)
+						if (!TF2_IsPlayerInCondition(iClientIdx, TFCONDITION_GHOST))
+						{
+							PrintToChat (iClientIdx, "[DeathPerks] Ghost spawned.");
+							TF2_AddCondition(iClientIdx, TFCONDITION_GHOST, 60.0, 0);
+						}
+						else
+						{
+							PrintToChat (iClientIdx, "[DeathPerks] ERROR - Already a ghost.");
+						}
 					}
 				}
 			}
@@ -333,13 +355,22 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 					{		
 						if(GetEntityCount() < GetMaxEntities()-32)
 						{
+							PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
+							
 							DispatchSpawn(iPumpkin);
 							vEnd[2] += OFFSET_HEIGHT_PUMPKIN;
 
 							new Float:ModelAngle[3] = VECTOR_ANGLE_PUMPKIN;
 							TeleportEntity(iPumpkin, vEnd, ModelAngle, NULL_VECTOR);
-							PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
-						}
+
+							// explode pumpkin
+							new Handle:pack;
+							g_hPumpkinTimerHandle[iClient] = CreateDataTimer(PUMPKINTIMER_EXPLODE_DELAY, CallExplodePumpkin, pack);
+												
+							WritePackCell(pack, iClient);
+							WritePackCell(pack, iPumpkin);
+
+							}
 						else
 						{
 							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn pumpkin, maxEntities reached.");
@@ -377,6 +408,9 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 				DispatchKeyValue(iBall, "physicsmode", "1");
 				DispatchKeyValue(iBall, "spawnflags", "256");
 				DispatchSpawn(iBall);
+
+				// Set ball size
+				//SetEntPropFloat(iBall, Prop_Send, "m_flModelScale", BALLPARAM_SCALE);
 				
 				new Float:ModelAngle[3] = VECTOR_ANGLE_BALL;
 				TeleportEntity(iBall, vOrigin, ModelAngle, NULL_VECTOR);
@@ -409,6 +443,8 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 					{		
 						if(GetEntityCount() < GetMaxEntities()-32)
 						{
+							PrintToChat (iClient, "[DeathPerks] Oildrum spawned.");
+
 							SetEntityModel(iOildrum, MODEL_PATH_OILDRUM);
 							vEnd[2] += OFFSET_HEIGHT_OILDRUM;
 
@@ -419,7 +455,14 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 
 							new Float:ModelAngle[3] = VECTOR_ANGLE_OILDRUM;
 							TeleportEntity(iOildrum, vEnd, ModelAngle, NULL_VECTOR);
-							PrintToChat (iClient, "[DeathPerks] Oildrum spawned.");
+							
+							// explode drum
+							new Handle:pack;
+							g_hDrumTimerHandle[iClient] = CreateDataTimer(DRUMTIMER_EXPLODE_DELAY, CallExplodeDrum, pack);
+												
+							WritePackCell(pack, iClient);
+							WritePackCell(pack, iOildrum);
+
 						}
 						else
 						{
@@ -484,6 +527,10 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 																);
 					TE_SendToAll();
 
+					// Lightning sound
+					EmitSoundToAll(LIGHTNING_SOUND_THUNDER, iClient, SNDCHAN_AUTO, SNDLEVEL_GUNFIRE, SND_NOFLAGS, SNDVOL_NORMAL);
+
+					// spawn frog
 					new Handle:pack;
 					g_hFrogTimerHandle[iClient] = CreateDataTimer(FROGTIMER_SPAWN_DELAY, CallSpawnFrog, pack);
 										
@@ -499,6 +546,11 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 			}
 
 			CloseHandle(TraceRay);
+		}
+
+		case Action_Ghost:
+		{
+			//PrintToChat (iClient, "[DeathPerks] Ghost spawned.");
 		}
 		
 		// If we get here, the cookie hasn't been set properly - so set it!
@@ -706,14 +758,74 @@ public Action:CallSpawnFrog(Handle:Timer, Handle:pack)
 }
 
 
+// timer: explode drum
+public Action:CallExplodeDrum(Handle:Timer, Handle:pack)
+{
+	// Set to the beginning and unpack it
+	ResetPack(pack);
+	new iClient = ReadPackCell(pack);
+	new iOildrum = ReadPackCell(pack);
+	
+	// will this cover if the oil drum is already exploded by a player?	
+	if ( IsValidEntity(iOildrum) )
+	{	
+		SDKHooks_TakeDamage(iOildrum, iClient, iClient, DRUMTIMER_EXPLODE_DAMAGE, DMG_GENERIC);
+	}
+	else
+	{
+		PrintToServer ("[DeathPerks] CATCH - Oildrum no longer exists.");
+	}
+
+	g_hDrumTimerHandle[iClient] = INVALID_HANDLE;
+
+}
+
+
+// timer: explode pumpkin
+public Action:CallExplodePumpkin(Handle:Timer, Handle:pack)
+{
+	// Set to the beginning and unpack it
+	ResetPack(pack);
+	new iClient = ReadPackCell(pack);
+	new iPumpkin = ReadPackCell(pack);
+
+	// will this cover if the pumpkin is already exploded by a player?	
+	if ( IsValidEntity(iPumpkin) )
+	{	
+		SDKHooks_TakeDamage(iPumpkin, iClient, iClient, PUMPKINTIMER_EXPLODE_DAMAGE, DMG_GENERIC);
+	}
+	else
+	{
+		PrintToServer ("[DeathPerks] CATCH - Pumpkin no longer exists.");
+	}
+	
+	g_hPumpkinTimerHandle[iClient] = INVALID_HANDLE;
+
+}
+
+
 // Cleanup when player leaves
 public OnClientDisconnect(client)
 {
-	// kill timer if we quickly disconnect
+	// kill frog timer if we quickly disconnect
 	if(g_hFrogTimerHandle[client] != INVALID_HANDLE)
 	{
 		KillTimer(g_hFrogTimerHandle[client]);
 		g_hFrogTimerHandle[client] = INVALID_HANDLE;
+	}
+	
+	// kill drum timer if we quickly disconnect
+	if(g_hDrumTimerHandle[client] != INVALID_HANDLE)
+	{
+		KillTimer(g_hDrumTimerHandle[client]);
+		g_hDrumTimerHandle[client] = INVALID_HANDLE;
+	}
+	
+	// kill pumpkin timer if we quickly disconnect
+	if(g_hPumpkinTimerHandle[client] != INVALID_HANDLE)
+	{
+		KillTimer(g_hPumpkinTimerHandle[client]);
+		g_hPumpkinTimerHandle[client] = INVALID_HANDLE;
 	}
 	
 }
@@ -723,13 +835,33 @@ public OnClientDisconnect(client)
 public OnMapEnd()
 {
 
-	// Kill timers for all players
+	// Kill frog timers for all players
 	for(new i = 0; i < (MAXPLAYERS + 1); i++)
 	{
 		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
 		{
 			KillTimer(g_hFrogTimerHandle[i]);
 			g_hFrogTimerHandle[i] = INVALID_HANDLE;
+		}
+	}
+
+	// Kill drum timers for all players
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(g_hDrumTimerHandle[i] != INVALID_HANDLE)
+		{
+			KillTimer(g_hDrumTimerHandle[i]);
+			g_hDrumTimerHandle[i] = INVALID_HANDLE;
+		}
+	}
+
+	// Kill pumpkin timers for all players
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(g_hPumpkinTimerHandle[i] != INVALID_HANDLE)
+		{
+			KillTimer(g_hPumpkinTimerHandle[i]);
+			g_hPumpkinTimerHandle[i] = INVALID_HANDLE;
 		}
 	}
 
