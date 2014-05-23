@@ -1,7 +1,7 @@
 //	------------------------------------------------------------------------------------
 //	Filename:		donator.deathperks.sp
 //	Author:			Malachi
-//	Version:		(see PLUGIN_VERSION)
+//	Version:		(see PLUGIN_INFO_VERSION)
 //	Description:
 //					Plugin spawns various options when donator dies during afterround.
 //
@@ -21,6 +21,8 @@
 // * 2013-08-09	-	0.1.12		-	add ghost - handle remnant particle/glow effects, use array to enable/disable
 // * 2013-08-17	-	0.1.13		-	add ball scale, disable ghost until particle/glow is fixed
 // * 2013-11-03	-	0.1.14		-	use newly added tfcondition ghost mode, trigger oildrum+pumpkin to explode, disable ball scale
+// * 2014-02-14	-	0.1.15		-	fix ghost?
+// * 2014-05-19	-	0.1.16		-	add uber, statue, improve error logging, reorganized functions, commnet out ghost, uber
 //	------------------------------------------------------------------------------------
 
 
@@ -37,9 +39,16 @@
 
 
 // DEFINES
-#define PLUGIN_VERSION	"0.1.14"
 
-// These define the text players see in the donator menu
+// Plugin Info
+#define PLUGIN_INFO_VERSION			"0.1.16"
+#define PLUGIN_INFO_NAME			"Donator Death Perks"
+#define PLUGIN_INFO_AUTHOR			"Malachi"
+#define PLUGIN_INFO_DESCRIPTION		"handles after-round donator perks"
+#define PLUGIN_INFO_URL				"http://www.necrophix.com/"
+#define PLUGIN_PRINT_NAME			"[DeathPerks]"							// Used for self-identification in chat/logging
+
+// Donator menu
 #define MENUTEXT_SPAWN_ITEM				"After-round Perks"
 #define MENUTITLE_SPAWN_ITEM			"Donator: Change After-round Perk:"
 #define MENUSELECT_ITEM_NULL			"Disabled"
@@ -48,6 +57,8 @@
 #define MENUSELECT_ITEM_OILDRUM			"Barrel on Death"
 #define MENUSELECT_ITEM_FROG			"Frog on Death"
 #define MENUSELECT_ITEM_GHOST			"Ghost Mode"
+#define MENUSELECT_ITEM_UBER			"Ubered"
+#define MENUSELECT_ITEM_STATUE			"Statued"
 
 // cookie names
 #define COOKIENAME_SPAWN_ITEM			"donator_deathperks"
@@ -61,6 +72,10 @@
 #define ENTITY_NAME_PROPANETANK			""
 #define ENTITY_NAME_EXPLOSION			"env_explosion"
 #define ENTITY_NAME_GHOST				""
+
+// Target Name
+#define DEATHPERKS_TARGET_NAME			"donator_deathperks_entity"
+#define DEATHPERKS_TARGET_KEYVALUE		"m_iName"
 
 // Model paths
 #define MODEL_PATH_PUMPKIN				"models/props_halloween/pumpkin_explode.mdl"
@@ -125,15 +140,24 @@
 // Drum Parameters
 #define DRUMTIMER_EXPLODE_DELAY			1.5											// How soon after player death does drum explode.
 #define DRUMTIMER_EXPLODE_DAMAGE		100.0										// Amount of damage to make drum explode.
+#define DRUMKEYVALUE_MAGNITUDE			"m_explodeDamage"							// Key value: Magnitude
+#define DRUM_MAGNITUDE					500.0										// Pumpkin explosion magnitude
+#define DRUMKEYVALUE_RADIUS				"m_explodeRadius"							// Key value: radius
+#define DRUM_RADIUS						256.0										// Pumpkin explosion radius
 
 // Pumpkin Parameters
 #define PUMPKINTIMER_EXPLODE_DELAY		1.5											// How soon after player death does drum explode.
 #define PUMPKINTIMER_EXPLODE_DAMAGE		100.0										// Amount of damage to make drum explode.
+#define PUMPKINKEYVALUE_MAGNITUDE		"m_explodeDamage"							// Key value: Magnitude
+#define PUMPKIN_MAGNITUDE				500.0										// Pumpkin explosion magnitude
+#define PUMPKINKEYVALUE_RADIUS			"m_explodeRadius"							// Key value: radius
+#define PUMPKIN_RADIUS					256.0										// Pumpkin explosion radius
 
 // Ghost Parameters
 #define GHOSTPOV_DISABLE			0												// turn off third person pov
 #define GHOSTPOV_ENABLE				2												// turn on third person pov
-#define TFCONDITION_GHOST			TFCond_HalloweenGhostMode						// the tf condition # for ghost mode
+#define TFCONDITION_GHOST			TFCond_HalloweenGhostMode						// the tf condition #77 for ghost mode
+#define TFCONDITION_GHOST2			TFCond_HalloweenInHell							// 2nd tf condition #76 for ghost mode
 #define	SOUND_NAME_GHOST_1			"vo/halloween_boo1.wav"
 #define	SOUND_NAME_GHOST_2			"vo/halloween_boo2.wav"
 #define	SOUND_NAME_GHOST_3			"vo/halloween_boo3.wav"
@@ -141,6 +165,24 @@
 #define	SOUND_NAME_GHOST_5			"vo/halloween_boo5.wav"
 #define	SOUND_NAME_GHOST_6			"vo/halloween_boo6.wav"
 #define	SOUND_NAME_GHOST_7			"vo/halloween_boo7.wav"
+
+// Uber Parameters
+#define TFCONDITION_UBERCHARGED		TFCond_Ubercharged								// TF2 Condition to enable uber
+#define TFCONDITION_UBER_TIME		60.0											// Float time (seconds) for condition to last
+#define TFCONDITION_DAZED			TFCond_Dazed									// TF2 Condition to enable daze
+#define TFSTUNFLAG_NONE		        (0 << 0)
+#define TFSTUNFLAG_LOSER		 	TF_STUNFLAGS_LOSERSTATE
+
+// Statue Parameters
+#define STATUE_MOVETYPE				MOVETYPE_NONE									// movetype to use for statue
+#define STATUE_COLOR_RED			0
+#define STATUE_COLOR_GREEN			128
+#define STATUE_COLOR_BLUE			255
+#define STATUE_COLOR_ALPHA			192
+#define STATUE_COLOR_RED_RESET		255
+#define STATUE_COLOR_GREEN_RESET	255
+#define STATUE_COLOR_BLUE_RESET		255
+#define STATUE_COLOR_ALPHA_RESET	255
 
 
 enum _:CookieActionType
@@ -150,7 +192,9 @@ enum _:CookieActionType
 	Action_Ball = 2,
 	Action_Oildrum = 3,
 	Action_Frog = 4,
-	Action_Ghost = 5
+	Action_Ghost = 5,
+	Action_Uber = 6,
+	Action_Statue = 7
 //	Action_Grave = 6,
 //	Action_Bird = 7,
 };
@@ -160,24 +204,32 @@ enum _:CookieActionType
 new Handle:g_hDeathItemCookie = INVALID_HANDLE;
 new bool:g_bRoundEnded = false;
 new g_iLightningSprite = 0;
+
 new Handle:g_hFrogTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 new Handle:g_hDrumTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 new Handle:g_hPumpkinTimerHandle[MAXPLAYERS + 1] = {INVALID_HANDLE, ...};
 
+new g_hFrogEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
+new g_hDrumEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
+new g_hPumpkinEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
+new g_hBallEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
 
+
+// Info
 public Plugin:myinfo = 
 {
-	name = "Donator Death Perks",
-	author = "Malachi",
-	description = "handles after-round donator perks",
-	version = PLUGIN_VERSION,
-	url = "www.necrophix.com"
+	name = PLUGIN_INFO_NAME,
+	author = PLUGIN_INFO_AUTHOR,
+	description = PLUGIN_INFO_DESCRIPTION,
+	version = PLUGIN_INFO_VERSION,
+	url = PLUGIN_INFO_URL
 }
 
 
 public OnPluginStart()
 {
-	PrintToServer("[Donator:DeathPerks] Plugin start...");
+	// Advertise our presence...
+	PrintToServer("%s v%s Plugin start...", PLUGIN_PRINT_NAME, PLUGIN_INFO_VERSION);
 
 	// Cookie time
 	g_hDeathItemCookie = RegClientCookie(COOKIENAME_SPAWN_ITEM, COOKIEDESCRIPTION_SPAWN_ITEM, CookieAccess_Private);
@@ -195,10 +247,10 @@ public OnPluginStart()
 public OnAllPluginsLoaded()
 {
 	if(!LibraryExists("donator.core"))
-		SetFailState("[Donator:DeathPerks] Unable to find plugin: Basic Donator Interface");
+		SetFailState("%s Unable to find plugin: Basic Donator Interface", PLUGIN_PRINT_NAME);
 
 	if(GetExtensionFileStatus("sdkhooks.ext") < 1)
-		SetFailState("[Donator:DeathPerks] SDK Hooks is not loaded.");
+		SetFailState("%s SDK Hooks is not loaded.", PLUGIN_PRINT_NAME);
 		
 	Donator_RegisterMenuItem(MENUTEXT_SPAWN_ITEM, ChangeDeathItemCallback);
 }
@@ -228,36 +280,63 @@ public DonatorMenu:ChangeDeathItemCallback(iClient) Panel_ChangeDeathItem(iClien
 public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 {
 	// Cleanup all frogs
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hFrogTimerHandle[i]);
-			g_hFrogTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
+	CleanupTimerArray (g_hFrogTimerHandle);
+	KillEntityReferenceArray (g_hFrogEntityReference);
 
 	// Cleanup all drums
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hDrumTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hDrumTimerHandle[i]);
-			g_hDrumTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
+	CleanupTimerArray (g_hDrumTimerHandle);
+	KillEntityReferenceArray (g_hDrumEntityReference);
 
 	// Cleanup all pumpkins
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hPumpkinTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hPumpkinTimerHandle[i]);
-			g_hPumpkinTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
+	CleanupTimerArray (g_hPumpkinTimerHandle);
+	KillEntityReferenceArray (g_hPumpkinEntityReference);
+
+	// Cleanup all balls
+	KillEntityReferenceArray (g_hBallEntityReference);
 
 	g_bRoundEnded = false;
+
+}
+
+
+// Cleanup all timers on map end
+public OnMapEnd()
+{
+	// Cleanup all frogs
+	CleanupTimerArray (g_hFrogTimerHandle);
+	KillEntityReferenceArray (g_hFrogEntityReference);
+
+	// Cleanup all drums
+	CleanupTimerArray (g_hDrumTimerHandle);
+	KillEntityReferenceArray (g_hDrumEntityReference);
+
+	// Cleanup all pumpkins
+	CleanupTimerArray (g_hPumpkinTimerHandle);
+	KillEntityReferenceArray (g_hPumpkinEntityReference);
+
+	// Cleanup all balls
+	KillEntityReferenceArray (g_hBallEntityReference);
+
+}
+
+
+// Cleanup when player leaves
+public OnClientDisconnect(iClient)
+{
+	// Cleanup all frogs
+	CleanupTimerClient (g_hFrogTimerHandle, iClient);
+	KillEntityReferenceClient (g_hFrogEntityReference, iClient);
+
+	// Cleanup all drums
+	CleanupTimerClient (g_hDrumTimerHandle, iClient);
+	KillEntityReferenceClient (g_hDrumEntityReference, iClient);
+
+	// Cleanup all pumpkins
+	CleanupTimerClient (g_hPumpkinTimerHandle, iClient);
+	KillEntityReferenceClient (g_hPumpkinEntityReference, iClient);
+
+	// Cleanup all balls
+	KillEntityReferenceClient (g_hBallEntityReference, iClient);
 
 }
 
@@ -266,37 +345,41 @@ public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 {	
 	g_bRoundEnded = true;
 	
-	// Handle Ghost
-	for (new iClientIdx = 1; iClientIdx <= MaxClients; iClientIdx++)
+	// Handle Ghost, Uber
+	for (new iClient = 1; iClient <= MaxClients; iClient++)
 	{
 		// Is client in game?
-		if (IsClientInGame(iClientIdx))
+		if (IsClientInGame(iClient))
 		{
 			// Is this client fake?
-			if (!IsFakeClient(iClientIdx))
+			if (!IsFakeClient(iClient))
 			{
 				// Is this client a donator?
-				if (IsPlayerDonator(iClientIdx))
+				if (IsPlayerDonator(iClient))
 				{
 					decl String:iTmp[32];
 					new iSelected;
 
-					GetClientCookie(iClientIdx, g_hDeathItemCookie, iTmp, sizeof(iTmp));
+					GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));
 					iSelected = StringToInt(iTmp);
 
 					if (_:iSelected == Action_Ghost)
 					{
-						// apparently will crash server if you try to set this twice (like on plr_hightower_event)
-						if (!TF2_IsPlayerInCondition(iClientIdx, TFCONDITION_GHOST))
-						{
-							PrintToChat (iClientIdx, "[DeathPerks] Ghost spawned.");
-							TF2_AddCondition(iClientIdx, TFCONDITION_GHOST, 60.0, 0);
-						}
-						else
-						{
-							PrintToChat (iClientIdx, "[DeathPerks] ERROR - Already a ghost.");
-						}
+//						doCreateGhost(iClient);
+						PrintToChat (iClient, "%s Sorry, Ghost currently disabled.", PLUGIN_PRINT_NAME);
 					}
+					else
+					if (_:iSelected == Action_Uber)
+					{
+//						doCreateUber(iClient);
+						PrintToChat (iClient, "%s Sorry, Uber currently disabled.", PLUGIN_PRINT_NAME);
+					}
+					else
+					if (_:iSelected == Action_Statue)
+					{
+						doCreateStatue(iClient);
+					}
+					
 				}
 			}
 		}
@@ -328,229 +411,42 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 	{
 		case Action_Null:
 		{
-			PrintToChat (iClient, "[DeathPerks] Nothing spawned.");
+			PrintToChat (iClient, "%s No perks selected.", PLUGIN_PRINT_NAME);
 		}
 		
 		case Action_Pumpkin:
 		{
-			decl Float:vOrigin[3];
-			GetClientEyePosition(iClient, vOrigin);
-			decl Handle:TraceRay;
-			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
-
-			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
-
-			if (TR_DidHit(TraceRay))
-			{
-				decl Float:Distance;
-				decl Float:vEnd[3];
-				TR_GetEndPosition(vEnd, TraceRay);
-				Distance = (GetVectorDistance(vOrigin, vEnd));
-
-				if (Distance < MAX_SPAWN_DISTANCE)
-				{
-					new iPumpkin = CreateEntityByName(ENTITY_NAME_PUMPKIN);
-					
-					if(IsValidEntity(iPumpkin))
-					{		
-						if(GetEntityCount() < GetMaxEntities()-32)
-						{
-							PrintToChat (iClient, "[DeathPerks] Pumpkin spawned.");
-							
-							DispatchSpawn(iPumpkin);
-							vEnd[2] += OFFSET_HEIGHT_PUMPKIN;
-
-							new Float:ModelAngle[3] = VECTOR_ANGLE_PUMPKIN;
-							TeleportEntity(iPumpkin, vEnd, ModelAngle, NULL_VECTOR);
-
-							// explode pumpkin
-							new Handle:pack;
-							g_hPumpkinTimerHandle[iClient] = CreateDataTimer(PUMPKINTIMER_EXPLODE_DELAY, CallExplodePumpkin, pack);
-												
-							WritePackCell(pack, iClient);
-							WritePackCell(pack, iPumpkin);
-
-							}
-						else
-						{
-							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn pumpkin, maxEntities reached.");
-						}
-						
-					}
-					else
-					{
-						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, pumpkin spawn failed.");
-					}
-				}
-			}
-			else
-			{
-				PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
-			}
-
-			CloseHandle(TraceRay);
+			doCreatePumpkin(iClient);
 		}
 		
 		case Action_Ball:
 		{
-			new iBall = CreateEntityByName(ENTITY_NAME_BALL);
-			
-			if(IsValidEntity(iBall))
-			{
-				decl Float:vOrigin[3];
-				GetClientEyePosition(iClient, vOrigin);
-				
-				vOrigin[2] += OFFSET_HEIGHT_BALL;
-
-				DispatchKeyValue(iBall, "model", MODEL_PATH_BALL);
-				DispatchKeyValue(iBall, "disableshadows", "1");
-				DispatchKeyValue(iBall, "skin", "0");
-				DispatchKeyValue(iBall, "physicsmode", "1");
-				DispatchKeyValue(iBall, "spawnflags", "256");
-				DispatchSpawn(iBall);
-
-				// Set ball size
-				//SetEntPropFloat(iBall, Prop_Send, "m_flModelScale", BALLPARAM_SCALE);
-				
-				new Float:ModelAngle[3] = VECTOR_ANGLE_BALL;
-				TeleportEntity(iBall, vOrigin, ModelAngle, NULL_VECTOR);
-				
-				PrintToChat (iClient, "[DeathPerks] Ball spawned.");
-			}
+			doCreateBall(iClient);
 		}
 		
 		case Action_Oildrum:
 		{
-			decl Float:vOrigin[3];
-			GetClientEyePosition(iClient, vOrigin);
-			decl Handle:TraceRay;
-			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
-
-			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
-
-			if (TR_DidHit(TraceRay))
-			{
-				decl Float:Distance;
-				decl Float:vEnd[3];
-				TR_GetEndPosition(vEnd, TraceRay);
-				Distance = (GetVectorDistance(vOrigin, vEnd));
-
-				if (Distance < MAX_SPAWN_DISTANCE)
-				{
-					new iOildrum = CreateEntityByName(ENTITY_NAME_OILDRUM);
-					
-					if(IsValidEntity(iOildrum))
-					{		
-						if(GetEntityCount() < GetMaxEntities()-32)
-						{
-							PrintToChat (iClient, "[DeathPerks] Oildrum spawned.");
-
-							SetEntityModel(iOildrum, MODEL_PATH_OILDRUM);
-							vEnd[2] += OFFSET_HEIGHT_OILDRUM;
-
-							DispatchSpawn(iOildrum);
-							SetEntityMoveType(iOildrum, MOVETYPE_VPHYSICS);
-							SetEntProp(iOildrum, Prop_Send, "m_CollisionGroup", 5);
-							SetEntProp(iOildrum, Prop_Send, "m_nSolidType", 6);
-
-							new Float:ModelAngle[3] = VECTOR_ANGLE_OILDRUM;
-							TeleportEntity(iOildrum, vEnd, ModelAngle, NULL_VECTOR);
-							
-							// explode drum
-							new Handle:pack;
-							g_hDrumTimerHandle[iClient] = CreateDataTimer(DRUMTIMER_EXPLODE_DELAY, CallExplodeDrum, pack);
-												
-							WritePackCell(pack, iClient);
-							WritePackCell(pack, iOildrum);
-
-						}
-						else
-						{
-							PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn oildrum, maxEntities reached.");
-						}
-						
-					}
-					else
-					{
-						PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, oildrum spawn failed.");
-					}
-				}
-				else
-				{
-					PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
-				}
-			}
-
-			CloseHandle(TraceRay);
+			doCreateOildrum(iClient);
 		}
 
 		case Action_Frog:
 		{
-			decl Float:vOrigin[3];
-			GetClientEyePosition(iClient, vOrigin);
-			decl Handle:TraceRay;
-			new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
-
-			TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
-
-			if (TR_DidHit(TraceRay))
-			{
-				decl Float:Distance;
-				decl Float:vEnd[3];
-				TR_GetEndPosition(vEnd, TraceRay);
-				Distance = (GetVectorDistance(vOrigin, vEnd));
-
-				if (Distance < MAX_SPAWN_DISTANCE)
-				{
-					// define where the lightning strike starts
-					new Float:vStart[3];
-					vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
-					vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
-					vStart[2] = vEnd[2] + 800;
-					
-					// define the color of the strike
-					new aColor[4] = LIGHTNING_COLOR;
-													
-					TE_SetupBeamPoints(		vStart, 
-											vEnd, 
-											g_iLightningSprite, 
-											LIGHTNING_HALOINDEX, 
-											LIGHTNING_STARTFRAME, 
-											LIGHTNING_FRAMERATE, 
-											LIGHTNING_LIFE, 
-											LIGHTNING_STARTWIDTH, 
-											LIGHTNING_ENDWIDTH, 
-											LIGHTNING_FADELENGTH, 
-											LIGHTNING_AMPLITUDE, 
-											aColor, 
-											LIGHTNING_SPEED
-																);
-					TE_SendToAll();
-
-					// Lightning sound
-					EmitSoundToAll(LIGHTNING_SOUND_THUNDER, iClient, SNDCHAN_AUTO, SNDLEVEL_GUNFIRE, SND_NOFLAGS, SNDVOL_NORMAL);
-
-					// spawn frog
-					new Handle:pack;
-					g_hFrogTimerHandle[iClient] = CreateDataTimer(FROGTIMER_SPAWN_DELAY, CallSpawnFrog, pack);
-										
-					WritePackCell(pack, iClient);
-					WritePackFloat(pack, vEnd[0]);
-					WritePackFloat(pack, vEnd[1]);
-					WritePackFloat(pack, vEnd[2]);
-				}
-			}
-			else
-			{
-				PrintToChat (iClient, "[DeathPerks] ERROR - Sorry, unable to locate ground!");
-			}
-
-			CloseHandle(TraceRay);
+			doCreateFrog(iClient);
 		}
 
-		case Action_Ghost:
+/*		case Action_Ghost:
 		{
-			//PrintToChat (iClient, "[DeathPerks] Ghost spawned.");
+			//PrintToChat (iClient, "%s Ghost spawned.", PLUGIN_PRINT_NAME);
+		}
+*/
+/*		case Action_Uber:
+		{
+			//PrintToChat (iClient, "%s Uber spawned.", PLUGIN_PRINT_NAME);
+		}
+*/
+		case Action_Statue:
+		{
+			//PrintToChat (iClient, "%s Statue spawned.", PLUGIN_PRINT_NAME);
 		}
 		
 		// If we get here, the cookie hasn't been set properly - so set it!
@@ -560,7 +456,7 @@ public Action:event_player_death(Handle:event, const String:name[], bool:dontBro
 			new String:iTemp[32];
 			IntToString(Action_Null, iTemp, sizeof(iTemp));
 			SetClientCookie(iClient, g_hDeathItemCookie, iTemp);		
-			PrintToChat (iClient, "[DeathPerks] Normalizing cookie - for extra yum!");
+			PrintToChat (iClient, "%s Normalizing cookie - for extra yum!", PLUGIN_PRINT_NAME);
 		}
 		
 	}
@@ -651,7 +547,7 @@ public Action:Panel_ChangeDeathItem(iClient)
 		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_FROG, ITEMDRAW_DEFAULT);
 	}
 	
-	// Ghost
+/*	// Ghost
 	if (_:iSelected == Action_Ghost)
 	{
 		new String:iCompare[32];
@@ -663,6 +559,34 @@ public Action:Panel_ChangeDeathItem(iClient)
 		new String:iCompare[32];
 		IntToString(Action_Ghost, iCompare, sizeof(iCompare));
 		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_GHOST, ITEMDRAW_DEFAULT);
+	}
+*/
+/*	// Uber
+	if (_:iSelected == Action_Uber)
+	{
+		new String:iCompare[32];
+		IntToString(Action_Uber, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_UBER, ITEMDRAW_DISABLED);
+	}
+	else
+	{
+		new String:iCompare[32];
+		IntToString(Action_Uber, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_UBER, ITEMDRAW_DEFAULT);
+	}
+*/	
+	// Statue
+	if (_:iSelected == Action_Statue)
+	{
+		new String:iCompare[32];
+		IntToString(Action_Statue, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_STATUE, ITEMDRAW_DISABLED);
+	}
+	else
+	{
+		new String:iCompare[32];
+		IntToString(Action_Statue, iCompare, sizeof(iCompare));
+		AddMenuItem(menu, iCompare, MENUSELECT_ITEM_STATUE, ITEMDRAW_DEFAULT);
 	}
 	
 	DisplayMenu(menu, iClient, 20);
@@ -709,12 +633,15 @@ public Action:CallSpawnFrog(Handle:Timer, Handle:pack)
 	vEnd[1] = ReadPackFloat(pack);
 	vEnd[2] = ReadPackFloat(pack);
 	
-//	PrintToChat (iClient, "[DeathPerks] Attempting to create frog at (%f, %f, %f) for client #%d.", vEnd[0], vEnd[1], vEnd[2], iClient);
+//	PrintToChat (iClient, "%s Attempting to create frog at (%f, %f, %f) for client #%d.", PLUGIN_PRINT_NAME, vEnd[0], vEnd[1], vEnd[2], iClient);
 
 	new iFrog = CreateEntityByName(ENTITY_NAME_FROG);
 	
 	if(IsValidEntity(iFrog))
-	{		
+	{	
+		// Save ent index as guaranteed reference for later
+		g_hFrogEntityReference[iClient] = EntIndexToEntRef(iFrog);
+	
 		if(GetEntityCount() < GetMaxEntities()-32)
 		{
 			SetEntityModel(iFrog, MODEL_PATH_FROG);
@@ -739,22 +666,38 @@ public Action:CallSpawnFrog(Handle:Timer, Handle:pack)
 			}
 
 
-			PrintToChat (iClient, "[DeathPerks] Frog spawned.");
+			PrintToChat (iClient, "%s Frog spawned.", PLUGIN_PRINT_NAME);
 		}
 		else
 		{
-			PrintToChat (iClient, "[DeathPerks] ERROR - Unable to spawn frog, maxEntities reached.");
+			PrintToChat (iClient, "%s ERROR - Unable to spawn frog, maxEntities reached.", PLUGIN_PRINT_NAME);
+			LogError ("%s ERROR - Unable to spawn frog, maxEntities reached.", PLUGIN_PRINT_NAME);
 		}
 		
 	}
 	else
 	{
-		PrintToChat (iClient, "[DeathPerks] ERROR - Unknown error, frog spawn failed.");
+		PrintToChat (iClient, "%s ERROR - Unknown error, frog spawn failed.", PLUGIN_PRINT_NAME);
+		LogError ("%s ERROR - Unknown error, frog spawn failed.", PLUGIN_PRINT_NAME);
 	}
 
 
 	g_hFrogTimerHandle[iClient] = INVALID_HANDLE;
 
+}
+
+
+// timer: Remove Stun
+public Action:CallRemoveStun(Handle:Timer, Handle:pack)
+{
+	// Set to the beginning and unpack it
+	ResetPack(pack);
+	new iClient = ReadPackCell(pack);
+
+//	TF2_RemoveCondition(iClient, TFCONDITION_DAZED);
+	TF2_AddCondition(iClient, TFCond_MegaHeal, TFCONDITION_UBER_TIME, 0);
+	TF2_AddCondition(iClient, TFCONDITION_UBERCHARGED, TFCONDITION_UBER_TIME, 0);
+	
 }
 
 
@@ -773,7 +716,7 @@ public Action:CallExplodeDrum(Handle:Timer, Handle:pack)
 	}
 	else
 	{
-		PrintToServer ("[DeathPerks] CATCH - Oildrum no longer exists.");
+		PrintToServer ("%s CATCH - Oildrum no longer exists.", PLUGIN_PRINT_NAME);
 	}
 
 	g_hDrumTimerHandle[iClient] = INVALID_HANDLE;
@@ -796,7 +739,7 @@ public Action:CallExplodePumpkin(Handle:Timer, Handle:pack)
 	}
 	else
 	{
-		PrintToServer ("[DeathPerks] CATCH - Pumpkin no longer exists.");
+		PrintToServer ("%s CATCH - Pumpkin no longer exists.", PLUGIN_PRINT_NAME);
 	}
 	
 	g_hPumpkinTimerHandle[iClient] = INVALID_HANDLE;
@@ -804,67 +747,386 @@ public Action:CallExplodePumpkin(Handle:Timer, Handle:pack)
 }
 
 
-// Cleanup when player leaves
-public OnClientDisconnect(client)
+doCreateGhost(iClient)
 {
-	// kill frog timer if we quickly disconnect
-	if(g_hFrogTimerHandle[client] != INVALID_HANDLE)
+	// apparently will crash server if you try to set this twice (like on plr_hightower_event)
+/*	if (!TF2_IsPlayerInCondition(iClient, TFCONDITION_GHOST) && !TF2_IsPlayerInCondition(iClient, TFCONDITION_GHOST2))
 	{
-		KillTimer(g_hFrogTimerHandle[client]);
-		g_hFrogTimerHandle[client] = INVALID_HANDLE;
+		PrintToChat (iClient, "%s Ghost spawned.", PLUGIN_PRINT_NAME);
+		TF2_AddCondition(iClient, TFCONDITION_GHOST, 60.0, 0);
 	}
-	
-	// kill drum timer if we quickly disconnect
-	if(g_hDrumTimerHandle[client] != INVALID_HANDLE)
+	else
 	{
-		KillTimer(g_hDrumTimerHandle[client]);
-		g_hDrumTimerHandle[client] = INVALID_HANDLE;
+		PrintToChat (iClient, "%s ERROR - Already a ghost.", PLUGIN_PRINT_NAME);
 	}
-	
-	// kill pumpkin timer if we quickly disconnect
-	if(g_hPumpkinTimerHandle[client] != INVALID_HANDLE)
-	{
-		KillTimer(g_hPumpkinTimerHandle[client]);
-		g_hPumpkinTimerHandle[client] = INVALID_HANDLE;
-	}
-	
+*/
+	PrintToChat (iClient, "%s Ghost temporarily disabled, sorry.", PLUGIN_PRINT_NAME);
 }
 
 
-// Cleanup all timers on map end
-public OnMapEnd()
+doCreateUber(iClient)
 {
+	// native TF2_AddCondition(client, TFCond:condition, Float:duration=TFCondDuration_Infinite, inflictor=0);
+	// If set to TFCondDuration_Infinite, player loses uber on medic heal.
+	// Doesnt work after round end on losing team?
+//	TF2_RemoveCondition(iClient, TFCONDITION_DAZED);
+//	TF2_StunPlayer(iClient, TFCONDITION_UBER_TIME, 0.0, TFSTUNFLAG_NONE, 0);
+//	TF2_StunPlayer(iClient, 0.1, 0.0, TFSTUNFLAG_LOSER, 0);
+//	TF2_AddCondition(iClient, TFCONDITION_UBERCHARGED, TFCONDITION_UBER_TIME, 0);
 
-	// Kill frog timers for all players
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hFrogTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hFrogTimerHandle[i]);
-			g_hFrogTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
+	new Handle:pack;
+	CreateDataTimer(0.1, CallRemoveStun, pack, TIMER_FLAG_NO_MAPCHANGE);
 
-	// Kill drum timers for all players
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hDrumTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hDrumTimerHandle[i]);
-			g_hDrumTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
-
-	// Kill pumpkin timers for all players
-	for(new i = 0; i < (MAXPLAYERS + 1); i++)
-	{
-		if(g_hPumpkinTimerHandle[i] != INVALID_HANDLE)
-		{
-			KillTimer(g_hPumpkinTimerHandle[i]);
-			g_hPumpkinTimerHandle[i] = INVALID_HANDLE;
-		}
-	}
+	WritePackCell(pack, iClient);
+	
+	PrintToChat (iClient, "%s Ubered.", PLUGIN_PRINT_NAME);
 
 }
 
+
+doCreateStatue(iClient)
+{
+	SetEntityMoveType(iClient, STATUE_MOVETYPE);
+//	SetEntityRenderColor(iClient, STATUE_COLOR_RED, STATUE_COLOR_GREEN, STATUE_COLOR_BLUE, STATUE_COLOR_ALPHA);
+
+//	new Float:vec[3];
+//	GetClientEyePosition(iClient, vec);
+//	EmitAmbientSound(SOUND_FREEZE, vec, iClient, SNDLEVEL_RAIDSIREN);
+
+	PrintToChat (iClient, "%s Turned you into a statue.", PLUGIN_PRINT_NAME);
+}
+
+
+doCreatePumpkin(iClient)
+{
+	decl Float:vOrigin[3];
+	GetClientEyePosition(iClient, vOrigin);
+	decl Handle:TraceRay;
+	new Float:Angles[3] = VECTOR_ANGLE_DOWN;
+
+	TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+	if (TR_DidHit(TraceRay))
+	{
+		decl Float:Distance;
+		decl Float:vEnd[3];
+		TR_GetEndPosition(vEnd, TraceRay);
+		Distance = (GetVectorDistance(vOrigin, vEnd));
+
+		if (Distance < MAX_SPAWN_DISTANCE)
+		{
+			new iPumpkin = CreateEntityByName(ENTITY_NAME_PUMPKIN);
+			
+			if(IsValidEntity(iPumpkin))
+			{		
+				// Save ent index as guaranteed reference for later
+				g_hPumpkinEntityReference[iClient] = EntIndexToEntRef(iPumpkin);
+				
+				if(GetEntityCount() < GetMaxEntities()-32)
+				{
+					PrintToChat (iClient, "%s Pumpkin spawned.", PLUGIN_PRINT_NAME);
+					
+					DispatchSpawn(iPumpkin);
+					vEnd[2] += OFFSET_HEIGHT_PUMPKIN;
+
+					new Float:ModelAngle[3] = VECTOR_ANGLE_PUMPKIN;
+					TeleportEntity(iPumpkin, vEnd, ModelAngle, NULL_VECTOR);
+
+					// Set explosion amount
+//					SetEntPropFloat(iPumpkin, Prop_Data, PUMPKINKEYVALUE_MAGNITUDE, PUMPKIN_MAGNITUDE);
+					
+					// Set explosion size
+//					SetEntPropFloat(iPumpkin, Prop_Data, PUMPKINKEYVALUE_RADIUS, PUMPKIN_RADIUS);
+
+					// explode pumpkin
+					new Handle:pack;
+					
+					g_hPumpkinTimerHandle[iClient] = CreateDataTimer(PUMPKINTIMER_EXPLODE_DELAY, CallExplodePumpkin, pack);
+					
+					WritePackCell(pack, iClient);
+					WritePackCell(pack, iPumpkin);
+					
+				}
+				else
+				{
+					PrintToChat (iClient, "%s ERROR - Unable to spawn pumpkin, maxEntities reached.", PLUGIN_PRINT_NAME);
+					LogError ("%s ERROR - Unable to spawn pumpkin, maxEntities reached.", PLUGIN_PRINT_NAME);
+				}
+				
+			}
+			else
+			{
+				PrintToChat (iClient, "%s ERROR - Unknown error, pumpkin spawn failed.", PLUGIN_PRINT_NAME);
+				LogError ("%s ERROR - Unknown error, pumpkin spawn failed.", PLUGIN_PRINT_NAME);
+			}
+		}
+	}
+	else
+	{
+		PrintToChat (iClient, "%s ERROR - Sorry, unable to locate ground!", PLUGIN_PRINT_NAME);
+	}
+
+	CloseHandle(TraceRay);
+}
+
+
+doCreateBall(iClient)
+{
+	new iBall = CreateEntityByName(ENTITY_NAME_BALL);
+	
+	if(IsValidEntity(iBall))
+	{
+		// Save ent index as guaranteed reference for later
+		g_hBallEntityReference[iClient] = EntIndexToEntRef(iBall);
+	
+		decl Float:vOrigin[3];
+		GetClientEyePosition(iClient, vOrigin);
+		
+		vOrigin[2] += OFFSET_HEIGHT_BALL;
+
+		DispatchKeyValue(iBall, "model", MODEL_PATH_BALL);
+		DispatchKeyValue(iBall, "disableshadows", "1");
+		DispatchKeyValue(iBall, "skin", "0");
+		DispatchKeyValue(iBall, "physicsmode", "1");
+		DispatchKeyValue(iBall, "spawnflags", "256");
+		DispatchSpawn(iBall);
+
+		// Set ball size
+		//SetEntPropFloat(iBall, Prop_Send, "m_flModelScale", BALLPARAM_SCALE);
+		
+		new Float:ModelAngle[3] = VECTOR_ANGLE_BALL;
+		TeleportEntity(iBall, vOrigin, ModelAngle, NULL_VECTOR);
+		
+		PrintToChat (iClient, "%s Ball spawned.", PLUGIN_PRINT_NAME);
+	}
+}
+
+
+doCreateOildrum(iClient)
+{
+	decl Float:vOrigin[3];
+	GetClientEyePosition(iClient, vOrigin);
+	decl Handle:TraceRay;
+	new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
+
+	TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+	if (TR_DidHit(TraceRay))
+	{
+		decl Float:Distance;
+		decl Float:vEnd[3];
+		TR_GetEndPosition(vEnd, TraceRay);
+		Distance = (GetVectorDistance(vOrigin, vEnd));
+
+		if (Distance < MAX_SPAWN_DISTANCE)
+		{
+			new iDrum = CreateEntityByName(ENTITY_NAME_OILDRUM);
+			
+			if(IsValidEntity(iDrum))
+			{		
+				// Save ent index as guaranteed reference for later
+				g_hDrumEntityReference[iClient] = EntIndexToEntRef(iDrum);
+				
+				if(GetEntityCount() < GetMaxEntities()-32)
+				{
+					PrintToChat (iClient, "%s Oildrum spawned.", PLUGIN_PRINT_NAME);
+
+					SetEntityModel(iDrum, MODEL_PATH_OILDRUM);
+					vEnd[2] += OFFSET_HEIGHT_OILDRUM;
+
+					DispatchSpawn(iDrum);
+					SetEntityMoveType(iDrum, MOVETYPE_VPHYSICS);
+					SetEntProp(iDrum, Prop_Send, "m_CollisionGroup", 5);
+					SetEntProp(iDrum, Prop_Send, "m_nSolidType", 6);
+
+					new Float:ModelAngle[3] = VECTOR_ANGLE_OILDRUM;
+					TeleportEntity(iDrum, vEnd, ModelAngle, NULL_VECTOR);
+					
+					// Set explosion amount
+					SetEntPropFloat(iDrum, Prop_Data, DRUMKEYVALUE_MAGNITUDE, DRUM_MAGNITUDE);
+					
+					// Set explosion size
+					SetEntPropFloat(iDrum, Prop_Data, DRUMKEYVALUE_RADIUS, DRUM_RADIUS);
+
+
+					// explode drum
+					new Handle:pack;
+					g_hDrumTimerHandle[iClient] = CreateDataTimer(DRUMTIMER_EXPLODE_DELAY, CallExplodeDrum, pack);
+										
+					WritePackCell(pack, iClient);
+					WritePackCell(pack, iDrum);
+
+				}
+				else
+				{
+					PrintToChat (iClient, "%s ERROR - Unable to spawn oildrum, maxEntities reached.", PLUGIN_PRINT_NAME);
+					LogError ("%s ERROR - Unable to spawn oildrum, maxEntities reached.", PLUGIN_PRINT_NAME);
+				}
+				
+			}
+			else
+			{
+				PrintToChat (iClient, "%s ERROR - Unknown error, oildrum spawn failed.", PLUGIN_PRINT_NAME);
+				LogError ("%s ERROR - Unknown error, oildrum spawn failed.", PLUGIN_PRINT_NAME);
+			}
+		}
+		else
+		{
+			PrintToChat (iClient, "%s ERROR - Sorry, unable to locate ground!", PLUGIN_PRINT_NAME);
+		}
+	}
+
+	CloseHandle(TraceRay);		
+}
+
+
+doCreateFrog(iClient)
+{
+	decl Float:vOrigin[3];
+	GetClientEyePosition(iClient, vOrigin);
+	decl Handle:TraceRay;
+	new Float:Angles[3] = VECTOR_ANGLE_DOWN;								// down
+
+	TraceRay = TR_TraceRayFilterEx(vOrigin, Angles, MASK_PROP_SPAWN, RayType_Infinite, TraceRayProp);
+
+	if (TR_DidHit(TraceRay))
+	{
+		decl Float:Distance;
+		decl Float:vEnd[3];
+		TR_GetEndPosition(vEnd, TraceRay);
+		Distance = (GetVectorDistance(vOrigin, vEnd));
+
+		if (Distance < MAX_SPAWN_DISTANCE)
+		{
+			// define where the lightning strike starts
+			new Float:vStart[3];
+			vStart[0] = vEnd[0] + GetRandomInt(-500, 500);
+			vStart[1] = vEnd[1] + GetRandomInt(-500, 500);
+			vStart[2] = vEnd[2] + 800;
+			
+			// define the color of the strike
+			new aColor[4] = LIGHTNING_COLOR;
+											
+			TE_SetupBeamPoints(		vStart, 
+									vEnd, 
+									g_iLightningSprite, 
+									LIGHTNING_HALOINDEX, 
+									LIGHTNING_STARTFRAME, 
+									LIGHTNING_FRAMERATE, 
+									LIGHTNING_LIFE, 
+									LIGHTNING_STARTWIDTH, 
+									LIGHTNING_ENDWIDTH, 
+									LIGHTNING_FADELENGTH, 
+									LIGHTNING_AMPLITUDE, 
+									aColor, 
+									LIGHTNING_SPEED
+														);
+			TE_SendToAll();
+
+			// Lightning sound
+			EmitSoundToAll(LIGHTNING_SOUND_THUNDER, iClient, SNDCHAN_AUTO, SNDLEVEL_GUNFIRE, SND_NOFLAGS, SNDVOL_NORMAL);
+
+			// spawn frog
+			new Handle:pack;
+			
+			g_hFrogTimerHandle[iClient] = CreateDataTimer(FROGTIMER_SPAWN_DELAY, CallSpawnFrog, pack);
+			
+			WritePackCell(pack, iClient);
+			WritePackFloat(pack, vEnd[0]);
+			WritePackFloat(pack, vEnd[1]);
+			WritePackFloat(pack, vEnd[2]);
+		}
+	}
+	else
+	{
+		PrintToChat (iClient, "%s ERROR - Sorry, unable to locate ground!", PLUGIN_PRINT_NAME);
+	}
+
+	CloseHandle(TraceRay);
+}
+
+
+// Cleanup all timers
+CleanupTimerArray (Handle:hTimer[])
+{
+	// For each player, kill the timers
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+		if(hTimer[i] != INVALID_HANDLE)
+		{
+			KillTimer(hTimer[i]);
+			hTimer[i] = INVALID_HANDLE;
+		}
+	}
+}
+
+
+// Cleanup single timer
+CleanupTimerClient (Handle:hTimer[], iClient)
+{
+	if(hTimer[iClient] != INVALID_HANDLE)
+	{
+		KillTimer(hTimer[iClient]);
+		hTimer[iClient] = INVALID_HANDLE;
+	}
+}
+
+
+// Cleanup all entities
+KillEntityReferenceArray(iEntity[])
+{
+	// For each entity, kill it
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+
+		new index = EntRefToEntIndex(iEntity[i]);
+		 
+		if (index == INVALID_ENT_REFERENCE)
+		{
+//			PrintToServer ("%s CATCH - Entity no longer exists.", PLUGIN_PRINT_NAME);
+		}
+		else
+		{
+			if (IsValidEntity(index))
+			{
+				PrintToServer ("%s Entity deleted.", PLUGIN_PRINT_NAME);
+				AcceptEntityInput(index, "kill");
+			}
+			else
+			{
+				PrintToServer ("%s CATCH - Entity exists but not valid.", PLUGIN_PRINT_NAME);
+			}
+		}
+
+		// Invalidate 
+		iEntity[i] = INVALID_ENT_REFERENCE;
+	}
+}
+
+
+// Cleanup single entity
+KillEntityReferenceClient(iEntity[], iClient)
+{
+	new index = EntRefToEntIndex(iEntity[iClient]);
+	 
+	if (index == INVALID_ENT_REFERENCE)
+	{
+		PrintToServer ("%s CATCH - Entity no longer exists.", PLUGIN_PRINT_NAME);
+	}
+	else
+	{
+		if (IsValidEntity(index))
+		{
+			PrintToServer ("%s Entity deleted.", PLUGIN_PRINT_NAME);
+			AcceptEntityInput(index, "kill");
+		}
+		else
+		{
+			PrintToServer ("%s CATCH - Entity exists but not valid.", PLUGIN_PRINT_NAME);
+		}
+	}
+
+	// Invalidate 
+	iEntity[iClient] = INVALID_ENT_REFERENCE;
+}
 
