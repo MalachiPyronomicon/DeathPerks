@@ -22,7 +22,8 @@
 // * 2013-08-17	-	0.1.13		-	add ball scale, disable ghost until particle/glow is fixed
 // * 2013-11-03	-	0.1.14		-	use newly added tfcondition ghost mode, trigger oildrum+pumpkin to explode, disable ball scale
 // * 2014-02-14	-	0.1.15		-	fix ghost?
-// * 2014-05-19	-	0.1.16		-	add uber, statue, improve error logging, reorganized functions, commnet out ghost, uber
+// * 2014-05-19	-	0.1.16		-	add uber, statue, improve error logging, reorganized functions, comment out ghost/uber
+// * 2014-05-23	-	0.1.17		-	improve statue
 //	------------------------------------------------------------------------------------
 
 
@@ -31,9 +32,9 @@
 #include <donator>
 #include <clientprefs>
 #include <sdktools>
-#include <tf2>					// TF2_AddCondition
-#include <tf2_stocks>			// TF2_IsPlayerInCondition
-#include <sdkhooks>				// SDKHooks_TakeDamage
+#include <tf2>							// TF2_AddCondition
+#include <tf2_stocks>					// TF2_IsPlayerInCondition
+#include <sdkhooks>						// SDKHooks_TakeDamage
 
 #pragma semicolon 1
 
@@ -41,12 +42,12 @@
 // DEFINES
 
 // Plugin Info
-#define PLUGIN_INFO_VERSION			"0.1.16"
-#define PLUGIN_INFO_NAME			"Donator Death Perks"
-#define PLUGIN_INFO_AUTHOR			"Malachi"
-#define PLUGIN_INFO_DESCRIPTION		"handles after-round donator perks"
-#define PLUGIN_INFO_URL				"http://www.necrophix.com/"
-#define PLUGIN_PRINT_NAME			"[DeathPerks]"							// Used for self-identification in chat/logging
+#define PLUGIN_INFO_VERSION				"0.1.17"
+#define PLUGIN_INFO_NAME				"Donator Death Perks"
+#define PLUGIN_INFO_AUTHOR				"Malachi"
+#define PLUGIN_INFO_DESCRIPTION			"handles after-round donator perks"
+#define PLUGIN_INFO_URL					"http://www.necrophix.com/"
+#define PLUGIN_PRINT_NAME				"[DeathPerks]"							// Used for self-identification in chat/logging
 
 // Donator menu
 #define MENUTEXT_SPAWN_ITEM				"After-round Perks"
@@ -175,14 +176,15 @@
 
 // Statue Parameters
 #define STATUE_MOVETYPE				MOVETYPE_NONE									// movetype to use for statue
-#define STATUE_COLOR_RED			0
-#define STATUE_COLOR_GREEN			128
-#define STATUE_COLOR_BLUE			255
-#define STATUE_COLOR_ALPHA			192
+#define STATUE_COLOR_RED			92
+#define STATUE_COLOR_GREEN			92
+#define STATUE_COLOR_BLUE			92
+#define STATUE_COLOR_ALPHA			255
 #define STATUE_COLOR_RED_RESET		255
 #define STATUE_COLOR_GREEN_RESET	255
 #define STATUE_COLOR_BLUE_RESET		255
 #define STATUE_COLOR_ALPHA_RESET	255
+#define SOUND_FREEZE				"physics/glass/glass_impact_bullet4.wav"
 
 
 enum _:CookieActionType
@@ -213,6 +215,8 @@ new g_hFrogEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
 new g_hDrumEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
 new g_hPumpkinEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
 new g_hBallEntityReference[MAXPLAYERS + 1] = {INVALID_ENT_REFERENCE, ...};
+
+new bool:g_StatueClient[MAXPLAYERS + 1] = {false, ...};
 
 
 // Info
@@ -270,6 +274,7 @@ public OnMapStart()
 	PrecacheSound(SOUND_NAME_GHOST_6, true);
 	PrecacheSound(SOUND_NAME_GHOST_7, true);
 	PrecacheSound(LIGHTNING_SOUND_THUNDER, true);
+	PrecacheSound(SOUND_FREEZE, true);
 	g_iLightningSprite = PrecacheModel(SPRITE_PATH_LIGHTNING, true);
 }
 
@@ -294,6 +299,9 @@ public hook_Start(Handle:event, const String:name[], bool:dontBroadcast)
 	// Cleanup all balls
 	KillEntityReferenceArray (g_hBallEntityReference);
 
+	// Cleanup statues
+	doRemoveStatueArray (g_StatueClient);
+	
 	g_bRoundEnded = false;
 
 }
@@ -354,32 +362,36 @@ public hook_Win(Handle:event, const String:name[], bool:dontBroadcast)
 			// Is this client fake?
 			if (!IsFakeClient(iClient))
 			{
-				// Is this client a donator?
-				if (IsPlayerDonator(iClient))
+				// Is player alive?
+				if (IsPlayerAlive(iClient))
 				{
-					decl String:iTmp[32];
-					new iSelected;
+					// Is this client a donator?
+					if (IsPlayerDonator(iClient))
+					{
+						decl String:iTmp[32];
+						new iSelected;
 
-					GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));
-					iSelected = StringToInt(iTmp);
+						GetClientCookie(iClient, g_hDeathItemCookie, iTmp, sizeof(iTmp));
+						iSelected = StringToInt(iTmp);
 
-					if (_:iSelected == Action_Ghost)
-					{
-//						doCreateGhost(iClient);
-						PrintToChat (iClient, "%s Sorry, Ghost currently disabled.", PLUGIN_PRINT_NAME);
+						if (_:iSelected == Action_Ghost)
+						{
+	//						doCreateGhost(iClient);
+							PrintToChat (iClient, "%s Sorry, Ghost currently disabled.", PLUGIN_PRINT_NAME);
+						}
+						else
+						if (_:iSelected == Action_Uber)
+						{
+	//						doCreateUber(iClient);
+							PrintToChat (iClient, "%s Sorry, Uber currently disabled.", PLUGIN_PRINT_NAME);
+						}
+						else
+						if (_:iSelected == Action_Statue)
+						{
+							doCreateStatue(iClient);
+						}
+						
 					}
-					else
-					if (_:iSelected == Action_Uber)
-					{
-//						doCreateUber(iClient);
-						PrintToChat (iClient, "%s Sorry, Uber currently disabled.", PLUGIN_PRINT_NAME);
-					}
-					else
-					if (_:iSelected == Action_Statue)
-					{
-						doCreateStatue(iClient);
-					}
-					
 				}
 			}
 		}
@@ -786,14 +798,60 @@ doCreateUber(iClient)
 
 doCreateStatue(iClient)
 {
-	SetEntityMoveType(iClient, STATUE_MOVETYPE);
-//	SetEntityRenderColor(iClient, STATUE_COLOR_RED, STATUE_COLOR_GREEN, STATUE_COLOR_BLUE, STATUE_COLOR_ALPHA);
+	// Remember who we made into a statue
+	g_StatueClient[iClient] = true;
 
-//	new Float:vec[3];
-//	GetClientEyePosition(iClient, vec);
-//	EmitAmbientSound(SOUND_FREEZE, vec, iClient, SNDLEVEL_RAIDSIREN);
+	SDKHook(iClient, SDKHook_OnTakeDamage, BlockClientDamage);
+	
+	SetEntityMoveType(iClient, STATUE_MOVETYPE);
+	SetEntityRenderColor(iClient, STATUE_COLOR_RED, STATUE_COLOR_GREEN, STATUE_COLOR_BLUE, STATUE_COLOR_ALPHA);
+
+	new Float:vec[3];
+	GetClientEyePosition(iClient, vec);
+	EmitAmbientSound(SOUND_FREEZE, vec, iClient, SNDLEVEL_RAIDSIREN);
+
+	// Kill animation playing
+//	SetVariantString("idle");
+//	AcceptEntityInput(iClient , "SetAnimation", -1, -1, 0);
 
 	PrintToChat (iClient, "%s Turned you into a statue.", PLUGIN_PRINT_NAME);
+}
+
+
+doRemoveStatueArray(bool:iClient[])
+{
+	// For each client, undo statue
+	for(new i = 0; i < (MAXPLAYERS + 1); i++)
+	{
+
+		// Remember who we made into a statue
+		if (iClient[i] == true)
+		{
+			SDKUnhook(i, SDKHook_OnTakeDamage, BlockClientDamage);
+			
+			SetEntityRenderColor(i, STATUE_COLOR_RED_RESET, STATUE_COLOR_GREEN_RESET, STATUE_COLOR_BLUE_RESET, STATUE_COLOR_ALPHA_RESET);
+		}
+		
+		// zero everyone out
+		iClient[i] = false;
+	}
+}
+
+
+public Action:BlockClientDamage(victim, &attacker, &inflictor, &Float:damage, &damagetype, &weapon, Float:damageForce[3], Float:damagePosition[3], damagecustom)
+{
+	if (g_StatueClient[victim] == true)
+	{
+		if (g_bRoundEnded == true)
+		{
+			damage = 0.0;
+			return Plugin_Changed;
+		}
+	}
+	
+	PrintToServer ("%s CATCH - BlockClientDamage: not a statue and/or not round end.", PLUGIN_PRINT_NAME);
+	
+	return Plugin_Continue;
 }
 
 
